@@ -340,8 +340,8 @@ jobs:
       - name: Point the build context at the previous application pin
         run: |
           set -euo pipefail
-          sed -i 's#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#d522a19d331297d7bdb56d384a27dcd4c1938af3#' docker-compose.yml
-          grep -n 'd522a19d331297d7bdb56d384a27dcd4c1938af3' docker-compose.yml
+          sed -i 's#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#f22af93a3b3172c01aa24c5664bcfb2aaeef9f86#' docker-compose.yml
+          grep -n 'f22af93a3b3172c01aa24c5664bcfb2aaeef9f86' docker-compose.yml
 
       - name: Seed a Dispatch install on the old application version
         run: |
