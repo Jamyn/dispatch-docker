@@ -49,7 +49,7 @@ services:
       # image above is pinned by digest: a tag can be repointed under us. That
       # mattered less when this built from the archived Netflix repo, whose refs
       # nobody can move, and matters again now that it builds from a live
-      # repository. d522a19d is branch base/main-debian-13, upstream's `main`
+      # repository. d522a19d is our fork's `main` (release v26.08.11), upstream's `main`
       # (dd2837e8, its final state before archival, 457 commits past the old
       # `latest`-based pin) plus this fork's fixes for breakage that jump
       # introduced, and its dependency raises past known CVEs:
