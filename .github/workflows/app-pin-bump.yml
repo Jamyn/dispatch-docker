@@ -131,12 +131,12 @@ jobs:
           cat > /tmp/pr-body.md <<BODY
           Moves the build context to [\`${NEW_TAG}\`](https://github.com/Jamyn/dispatch/releases/tag/${NEW_TAG}) (\`${NEW_SHA}\`), replacing \`${OLD_SHA}\`, which becomes the upgrade scenario's starting version.
 
-          Opened automatically. Merge with **squash** so the resulting commit carries GitHub's signature -- the branch commit is unsigned and \`master\` requires signed commits.
+          Opened automatically. Merge with **squash** so the resulting commit carries GitHub's signature -- the branch commit is unsigned and \`main\` requires signed commits.
 
           Image checks were dispatched against this branch; confirm they passed, and run the Postgres suite as well if this jump crosses application migrations.
           BODY
           sed -i 's/^          //' /tmp/pr-body.md
-          gh pr create --base master --head "$branch" \
+          gh pr create --base main --head "$branch" \
             --title "build: move the application pin to ${NEW_TAG}" \
             --label maintenance --label docker --label upstream \
             --body-file /tmp/pr-body.md
