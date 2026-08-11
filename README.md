@@ -1,107 +1,235 @@
-# 🚨 Notice: Dispatch is Being Archived 🚨
+# Dispatch Docker
 
-This repository will be **archived and marked as read-only on September 1, 2025**. After this date, no further changes, issues, or pull requests will be accepted.
+[![Postgres install](https://github.com/Jamyn/dispatch-docker/actions/workflows/postgres-install.yml/badge.svg)](https://github.com/Jamyn/dispatch-docker/actions/workflows/postgres-install.yml)
+[![License](https://img.shields.io/github/license/Jamyn/dispatch-docker)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Jamyn/dispatch-docker)](https://github.com/Jamyn/dispatch-docker/releases)
+[![Last commit](https://img.shields.io/github/last-commit/Jamyn/dispatch-docker)](https://github.com/Jamyn/dispatch-docker/commits/master)
 
-## 🙏 Thank You
+Docker Compose bootstrap for running [Dispatch](https://github.com/Jamyn/dispatch), Netflix's incident and signal management platform. This repository contains no application code. It's the shell, Compose, and configuration needed to build and run Dispatch, nothing more. To change how Dispatch itself behaves, see the main project; to change how it's built, configured, or deployed, you're in the right place.
 
-Since the first commit on **February 10, 2020**, Dispatch has grown into a sophisticated incident and signal management platform, thanks to the dedication and passion of its community. We are deeply grateful to the **[80 contributors](https://github.com/Netflix/dispatch/graphs/contributors)** who have shared their time, expertise, and creativity over the years. Your support has made Dispatch what it is today.
+## Status: independently maintained fork
 
-## ℹ️ What Does This Mean?
+[Netflix/dispatch](https://github.com/Netflix/dispatch) was archived and made read-only on **September 1, 2025**. It no longer accepts issues, pull requests, or changes of any kind.
 
-- The codebase will remain publicly available in a **read-only** state.
-- No new issues, pull requests, or discussions will be accepted.
-- Existing issues and pull requests will be closed.
-- We encourage users to fork the repository if they wish to continue development independently.
+This repository (a fork of `Netflix/dispatch-docker`) is maintained independently of Netflix. It may diverge from upstream, including with breaking changes, to fix security issues, update outdated components, and adapt the deployment to our own use of the product. Don't expect drop-in compatibility with the archived upstream project going forward.
 
-Thank you again to everyone who has contributed, used, or supported Dispatch over the years!
-
-— The Dispatch Team at Netflix
-
----
-
-# Dispatch
-
-Official bootstrap for running your own `Dispatch` with [Docker](https://www.docker.com/).
+The application itself is built from [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch), a fork of Netflix's archived app repo, pinned to a fixed commit in `docker-compose.yml`. As of the `main` migration, that pin is our fork's `main` (release [`v26.08.11`](https://github.com/Jamyn/dispatch/releases/tag/v26.08.11)), upstream's final state before archival, 457 commits past the old `latest`-based pin, plus fixes for the packaging breakage that commit jump introduced and the same base-OS/Postgres-client/mjml rework the old pin carried.
 
 ## Requirements
 
-- Docker 17.05.0+
-- Compose 1.19.0+
+- Docker Engine 25.0.0+
+- Docker Compose V2 2.0.0+ (invoked as `docker compose`; Compose V1's standalone `docker-compose` is not supported)
+- At least 2400 MB of RAM available to Docker
 
-## Minimum Hardware Requirements:
+## Quick start
 
-- You need at least 2400MB RAM
+```bash
+git clone https://github.com/Jamyn/dispatch-docker.git
+cd dispatch-docker
+./install.sh
+docker compose up -d
+```
 
-## Setup
+`install.sh` creates `.env` and `requirements.txt` from their `.example` files if they don't already exist, checks the requirements above, generates secrets, builds the image, and initializes the database. It prompts to load sample data unless `CI` is set in the environment.
 
-To get started with all the defaults, simply clone the repo and run `./install.sh` in your local check-out.
+Once the stack is running, register the first user:
 
-There may need to be modifications to the included example config files (`.env`) to accommodate your needs or your environment (such as adding Google credentials). If you want to perform these, do them before you run the install script and copy them without the `.example` extensions in the name before running the `install.sh` script.
+```
+http://localhost:8000/default/auth/register
+```
 
-## Data
+Then grant that user ownership (`default` is the organization name unless you loaded sample data under a different one):
 
-By default Dispatch does not come with any data. If you're looking for some example data, please use the postgres dump file located [here](https://github.com/Netflix/dispatch/blob/main/data/dispatch-sample-data.dump) to load example data.
+```bash
+docker exec -it dispatch-web-1 bash -c \
+  'dispatch user update --role owner --organization default you@example.com'
+```
 
-Note: when running the `install.sh` file, you will be asked whether to load this database dump, or to initialize a new database.
+If you need non-default configuration (e.g. Google OAuth credentials), copy `.env.example` to `.env` and edit it *before* running `install.sh`. The script won't overwrite an `.env` that already exists.
 
-### Starting with a clean database
+## Configuration
 
-If you decide to start with a clean database, you will need a user. To create a user, go to http://localhost:8000/default/auth/register.
+All configuration lives in `.env` (gitignored, created from `.env.example`). Compose loads it via `env_file:` on every service, so anything added to the example propagates to `postgres`, `core`, `web`, and `scheduler` automatically.
+
+| Variable | Purpose |
+| --- | --- |
+| `SECRET_KEY`, `DISPATCH_JWT_SECRET` | Application secrets. Generated by `install.sh` on every run where they're still the placeholder. |
+| `DISPATCH_ENCRYPTION_KEY` | Encrypts plugin credentials (Slack tokens, SMTP passwords, etc.) at rest. Generated once, on first install only, and it can't be rotated afterward without re-entering every plugin's config, so `install.sh` warns instead of touching it once data exists. |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Read by the official `postgres` image to initialize the cluster. Only applied on first init; changing them later doesn't change the running server's password. |
+| `DATABASE_CREDENTIALS` | The same Postgres credentials in `user:password` form, read by the application. Must stay in sync with `POSTGRES_USER`/`POSTGRES_PASSWORD`, and `install.sh` keeps them in sync when it generates the password itself. |
+| `DATABASE_HOSTNAME`, `DATABASE_PORT`, `DATABASE_NAME` | How the app finds Postgres. Defaults (`postgres`, `5432`, `dispatch`) match the Compose service name and shouldn't need to change. |
+| `VITE_*` | Forwarded as frontend build args if present in `.env` when `install.sh` runs (must match `ARG` declarations in the upstream Dockerfile). |
+| `COMPOSE_PROJECT_NAME` | Prefixes container and volume names. Default `dispatch` gives containers like `dispatch-web-1`, which the ownership-grant command below assumes; change the command to match if you change this. |
+
+Extra Dispatch plugins go in `requirements.txt` (one pip requirement per line) and are installed into the image at build time.
+
+See [Administration guide](https://hawkins.gitbook.io/dispatch/administration-guide/server) (upstream, archived) for the full set of server configuration options Dispatch itself understands.
+
+## Common commands
+
+```bash
+./install.sh                     # full install/upgrade: checks, secrets, build, DB init/migrate, plugins
+docker compose up -d             # start the stack
+docker compose build             # rebuild the dispatch-local image from the pinned commit
+docker compose logs -f web       # tail the API/UI logs
+docker compose logs -f scheduler # tail the background job logs
+```
+
+`install.sh` is idempotent, and re-running it is the supported way to pick up a rebuilt image. It leaves existing secrets, the database password, and existing data alone, and skips database initialization on an already-initialized schema.
+
+Upgrading across the `main` repin runs 457 commits of accumulated `dispatch database upgrade` migrations against your existing data. Back up first: `docker compose exec postgres pg_dumpall -U dispatch > backup.sql`.
+
+## Architecture
+
+| Service | Role |
+| --- | --- |
+| `postgres` | Database. Publishes no host port by default; reachable only by service name on the Compose network. |
+| `core` | Exists only to hold the `build:` block that produces the `dispatch-local` image `web` and `scheduler` both reference. |
+| `web` | The API and UI (`dispatch.main:app`), published on port `8000`. |
+| `scheduler` | Background jobs. Runs with `STATIC_DIR=` blank so it skips frontend assets. |
+
+**`core` is not just a build placeholder. It runs.** With no `command:` override it inherits the image's default CMD, which is the same server `web` runs. A plain `docker compose up -d` leaves a second, permanently-running copy of the full application reachable at `http://core:8000/` inside the Compose network, with no restart policy. This is a known quirk of the current setup, not an intentional second instance you're expected to use.
+
+For local development against your own Dispatch checkout, point the `context:` under `core` at a relative path to it (see the comment in `docker-compose.yml`) instead of the remote Git URL.
+
+## Sample data
+
+By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/latest/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored on our fork) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
+
+## Accessing Postgres from the host
+
+By default `postgres` publishes no host port. `web`, `scheduler`, and every `install.sh` database step reach it by service name over the internal Compose network.
+
+If you need direct host access (backups, monitoring), add a port mapping to the `postgres` service in `docker-compose.yml`:
+
+```yaml
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+```
+
+The three options, safest first:
+
+1. **No published port** (the default). Nothing outside the Compose network can reach the database.
+2. **`"127.0.0.1:5432:5432"`.** Reachable only from the Docker host itself. Good for backups and monitoring that run on that host, and the usual choice when you need access from elsewhere: pair it with an SSH tunnel or VPN rather than publishing the port further.
+3. **`"5432:5432"`.** Reachable from every network the host is on. Choose this deliberately, not by accident: Docker's port publishing adds `iptables` rules that sit ahead of host firewalls like `ufw` and `firewalld`, so those tools' rules commonly fail to block it. If you go this route, make sure the database has a strong password and that something other than the host firewall is actually restricting access.
+
+Apply the change with:
+
+```bash
+docker compose up -d --force-recreate postgres
+```
 
 ## Securing Dispatch with SSL/TLS
 
-If you'd like to protect your Dispatch install with SSL/TLS, there are
-fantastic SSL/TLS proxies like [HAProxy](http://www.haproxy.org/)
-and [Nginx](http://nginx.org/). You'll likely want to add this service to your `docker-compose.yml` file.
+Dispatch itself serves plain HTTP on port 8000. Put a TLS-terminating proxy such as [HAProxy](http://www.haproxy.org/) or [Nginx](http://nginx.org/) in front of it; you'll likely want to add it as another service in `docker-compose.yml`.
 
-## Updating Dispatch
+## Upgrading Postgres to a new major version
 
-The included `install.sh` script is meant to be idempotent and to bring you to the latest version. What this means is you can and should run `install.sh` to upgrade to the latest version available.
+<details>
+<summary>Re-running <code>install.sh</code> only covers Postgres <em>minor</em> version bumps. Crossing a <em>major</em> version (e.g. 14 → 18) needs a manual dump/restore. Expand for the full procedure.</summary>
 
-### Upgrading from an older version of postgres
+Postgres's on-disk format isn't compatible across major versions; the official image detects a mismatch and refuses to start rather than risk corrupting data, so Dispatch stays down until you complete these steps.
 
-If you are using an earlier version of `postgres` you may need to run manual steps to upgrade to the newest Postgres image.
+As of the 18 image, the official `postgres` image also changed where it stores data: a major-version-specific subdirectory (`/var/lib/postgresql/<major>/docker`) under a single volume mounted at the *parent* `/var/lib/postgresql`, instead of `/var/lib/postgresql/data` directly (see [docker-library/postgres#1259](https://github.com/docker-library/postgres/pull/1259)). This repo's `docker-compose.yml` already mounts the volume this way for 18+; if yours still mounts at `.../data`, update that as part of this procedure rather than just bumping the image tag.
 
-This assumes that you have not changed the default Postgres data path (`/var/lib/postgresql/data`) in your `docker-compose.yml`.
+This procedure was validated end-to-end (fresh install → representative data → dump → restore → migrations → application read/write → restart) against a 14 → 18 upgrade. Substitute your actual versions and container/volume names if they differ.
 
-If you have changed it, please replace all occurences of `/var/lib/postgresql/data` with your path.
+1. **Back up first.** Stop the application tier but leave Postgres running, then dump the entire cluster using the *old* container's own client tools:
+   ```bash
+   docker compose stop core web scheduler
+   docker compose exec -T postgres pg_dumpall -U "$POSTGRES_USER" > dispatch-pg-upgrade.sql
+   ```
+   Verify the dump is non-trivial before proceeding (e.g. `grep -c '^CREATE TABLE' dispatch-pg-upgrade.sql`). Then stop Postgres too: `docker compose stop postgres`.
 
-1. Make a backup of your Dispatch Postgres data dir.
-2. Stop all Dispatch containers, except the postgres one (e.g. use `docker stop` and not `docker-compose stop`).
-3. Create a new Postgres container which uses a different data directory:
-```
-docker run -d \
-      --name postgresnew \
-      -e POSTGRES_DB=dispatch \
-      -e POSTGRES_USER=dispatch \
-      -e POSTGRES_PASSWORD=dispatch \
-      -v /var/lib/postgresql/new:/var/lib/postgresql/data:rw \
-      postgres:latest
-```
-4. Use `pg_dumpall` to dump all data from the existing Postgres container to the new Postgres container (replace `DISPATCH_DATABASE_CONTAINER_NAME` (default is `postgres`) with the name of the old Postgres container):
-```
-docker exec \
-    DISPATCH_DATABASE_CONTAINER_NAME pg_dumpall -U postgres | \
-    docker exec -i postgresnew psql -U postgres
-```
-5. Stop and remove both Postgres containers:
-```
-docker stop DISPATCH_DATABASE_CONTAINER_NAME postgresnew
-docker rm DISPATCH_DATABASE_CONTAINER_NAME postgresnew
-```
-6. Edit your `docker-compose.yml` to use the `postgres:latest` image for the `database` container.
-7. Replace old Postgres data directory with upgraded data directory:
-```
-mv /var/lib/postgresql/data /var/lib/postgresql/old
-mv /var/lib/postgresql/new /var/lib/postgresql/data
-```
-8. Delete the old existing containers:
-```
-docker-compose rm
-```
-9. Start Dispatch up again:
-```
-docker-compose up
-```
+2. **Create a new volume for the new major version** rather than reusing the old one, so the old volume stays untouched as a rollback path:
+   ```bash
+   docker volume create dispatch-postgres-new
+   ```
 
-That should be it. Your Postgres data has now been updated to use the `postgres` image.
+3. **Start the target Postgres version against the new volume**, with the same credentials as `.env`, mounted at the parent directory:
+   ```bash
+   docker run -d --name pg-upgrade-target \
+     --env-file .env \
+     -v dispatch-postgres-new:/var/lib/postgresql \
+     postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+   ```
+
+4. **Restore the dump.** Two errors are expected and harmless (`role "dispatch" already exists`, `database "dispatch" already exists`), since the target container already created them from `.env` on first start:
+   ```bash
+   cat dispatch-pg-upgrade.sql | \
+     docker exec -i --env PGPASSWORD="$POSTGRES_PASSWORD" pg-upgrade-target \
+     psql -U "$POSTGRES_USER" -d postgres
+   ```
+
+5. **Verify the restored data directly**, before touching Dispatch:
+   ```bash
+   docker exec --env PGPASSWORD="$POSTGRES_PASSWORD" pg-upgrade-target \
+     psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "SHOW server_version;"
+   docker exec --env PGPASSWORD="$POSTGRES_PASSWORD" pg-upgrade-target \
+     psql -U "$POSTGRES_USER" -d "$DATABASE_NAME" -c "\dt dispatch_organization_default.*"
+   ```
+
+6. **Swap the volume in and remove the temporary container:**
+   ```bash
+   docker stop pg-upgrade-target && docker rm pg-upgrade-target
+   ```
+   Docker has no "rename a volume" operation, so pick one of two options:
+
+   **Option A (recommended):** point `docker-compose.yml`'s `postgres` service and top-level `volumes:` block at `dispatch-postgres-new` instead of `dispatch-postgres`. The original volume is left completely untouched, so rollback stays trivial.
+
+   **Option B:** reuse the `dispatch-postgres` name. This destroys the old volume, so only do it if you still have `dispatch-pg-upgrade.sql` from step 1. `docker compose stop` isn't enough here, because a stopped container still holds a reference to its volumes, so removing one fails with `volume is in use` until the containers themselves are gone:
+   ```bash
+   docker compose down --remove-orphans
+   docker volume rm dispatch-postgres
+   docker volume create dispatch-postgres
+   docker run --rm \
+     -v dispatch-postgres-new:/from -v dispatch-postgres:/to \
+     busybox cp -a /from/. /to/
+   ```
+
+7. **Start Dispatch on the new Postgres version and run migrations**, then confirm normal operation (log in, view/create an incident, check `docker compose logs scheduler` for errors):
+   ```bash
+   docker compose up -d
+   docker compose run --rm web database upgrade
+   ```
+
+8. Once you've confirmed Dispatch is healthy, the old `dispatch-postgres` volume (untouched since step 2) can be removed. Keep it until you're confident, since it's your rollback, by reattaching it to a `docker-compose.yml` still pinned to the old image and mount path.
+
+**Rollback:** retrying from step 2 with a new volume name is always safe, since the old volume is never modified. There's no supported way to convert an 18+ data directory back down to an older major version. "Rollback" always means reverting `docker-compose.yml` and reattaching the untouched old volume, not downgrading the new one.
+
+</details>
+
+## Security
+
+- Secrets in `.env.example` ship as an obvious placeholder (`REPLACEWITHSOMETHIINGSECRET`) and a well-known default database password (`dispatch`). `install.sh` replaces both with random values on a fresh install; it prints explicit rotation instructions instead if it finds them still in place against a database that already has data, since neither can be rotated automatically without data loss.
+- Publishing Postgres's port with a bare `5432:5432` exposes it on every network the host is on, and Docker's rules sit ahead of the host firewall. See [Accessing Postgres from the host](#accessing-postgres-from-the-host).
+- Dispatch itself serves plain HTTP; put it behind TLS before exposing it beyond your local network.
+
+**Reporting a vulnerability:** this is a single-maintainer fork with no formal disclosure process or SLA. Open a GitHub issue for anything already public; for something you'd rather not disclose before a fix ships, contact [@Jamyn](https://github.com/Jamyn) directly.
+
+## Contributing
+
+Pull requests are welcome.
+
+Every PR needs at least one **primary** label, saying what kind of change it is. CI enforces this:
+
+| label | use it for |
+| --- | --- |
+| `bug` | fixing broken behaviour |
+| `enhancement` | a new or improved capability |
+| `documentation` | documentation only |
+| `maintenance` | chores, refactors, and dependency upkeep |
+| `security` | a security control or vulnerability remediation |
+| `ci` | workflows, actions, and repository automation |
+| `breaking-change` | anything requiring operator action to upgrade |
+
+Prefer `security` over `bug` when a change is motivated by a security property, even where the symptom also reads as a defect.
+
+**Topic** labels are optional and say what a PR touches: `postgres`, `docker`, `compose`, `install`, `upstream`, `github-actions`. They never satisfy the CI check on their own.
+
+Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/): `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `perf`, or `security` (a local, non-standard extension used when a change's primary purpose is a security control), followed by a short imperative summary. Commit keywords and PR labels are separate vocabularies — don't assume a commit keyword implies the same-named label.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). This covers the contents of this repository (the Compose file, install script, and configuration); the Dispatch application itself, built from a separate repository, is licensed there.
