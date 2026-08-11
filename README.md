@@ -7,13 +7,13 @@
 
 Docker Compose bootstrap for running [Dispatch](https://github.com/Jamyn/dispatch), Netflix's incident and signal management platform. This repository contains no application code. It's the shell, Compose, and configuration needed to build and run Dispatch, nothing more. To change how Dispatch itself behaves, see the main project; to change how it's built, configured, or deployed, you're in the right place.
 
-## Status: independently maintained fork
+## Status: independently maintained
 
 [Netflix/dispatch](https://github.com/Netflix/dispatch) was archived and made read-only on **September 1, 2025**. It no longer accepts issues, pull requests, or changes of any kind.
 
-This repository (a fork of `Netflix/dispatch-docker`) is maintained independently of Netflix. It may diverge from upstream, including with breaking changes, to fix security issues, update outdated components, and adapt the deployment to our own use of the product. Don't expect drop-in compatibility with the archived upstream project going forward.
+This repository is a standalone continuation of `Netflix/dispatch-docker`, maintained independently of Netflix. It may diverge from upstream, including with breaking changes, to fix security issues, update outdated components, and adapt the deployment to our own use of the product. Don't expect drop-in compatibility with the archived upstream project going forward.
 
-The application itself is built from [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch), a fork of Netflix's archived app repo, pinned to a fixed commit in `docker-compose.yml`. As of the `main` migration, that pin is our fork's `main` (release [`v26.08.11`](https://github.com/Jamyn/dispatch/releases/tag/v26.08.11)), upstream's final state before archival, 457 commits past the old `latest`-based pin, plus fixes for the packaging breakage that commit jump introduced and the same base-OS/Postgres-client/mjml rework the old pin carried.
+The application itself is built from [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch), a standalone continuation of Netflix's archived app repo, pinned to a fixed commit in `docker-compose.yml`. As of the `main` migration, that pin is our `main` (release [`v26.08.11`](https://github.com/Jamyn/dispatch/releases/tag/v26.08.11)), upstream's final state before archival, 457 commits past the old `latest`-based pin, plus fixes for the packaging breakage that commit jump introduced and the same base-OS/Postgres-client/mjml rework the old pin carried.
 
 ## Requirements
 
@@ -94,7 +94,7 @@ For local development against your own Dispatch checkout, point the `context:` u
 
 ## Sample data
 
-By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/latest/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored on our fork) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
+By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/latest/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored in our repository) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
 
 ## Accessing Postgres from the host
 
@@ -206,7 +206,7 @@ This procedure was validated end-to-end (fresh install â†’ representative data â
 - Publishing Postgres's port with a bare `5432:5432` exposes it on every network the host is on, and Docker's rules sit ahead of the host firewall. See [Accessing Postgres from the host](#accessing-postgres-from-the-host).
 - Dispatch itself serves plain HTTP; put it behind TLS before exposing it beyond your local network.
 
-**Reporting a vulnerability:** this is a single-maintainer fork with no formal disclosure process or SLA. Open a GitHub issue for anything already public; for something you'd rather not disclose before a fix ships, contact [@Jamyn](https://github.com/Jamyn) directly.
+**Reporting a vulnerability:** this is a single-maintainer project with no formal disclosure process or SLA. Open a GitHub issue for anything already public; for something you'd rather not disclose before a fix ships, contact [@Jamyn](https://github.com/Jamyn) directly.
 
 ## Contributing
 
