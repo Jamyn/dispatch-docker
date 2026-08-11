@@ -6,17 +6,35 @@ services:
     <<: *restart_policy
     env_file:
       - .env
-    # Digest of the multi-arch manifest list for 14.6 (amd64 + arm64/v8 + arm),
+    # Digest of the multi-arch manifest list for 18.4 (amd64 + arm64/v8 + arm),
     # so the tag cannot be repointed under us. Update tag and digest together.
-    image: postgres:14.6@sha256:f565573d74aedc9b218e1d191b04ec75bdd50c33b2d44d91bcd3db5f2fcea647
+    image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
     # No host port mapping: web, scheduler, and every install.sh database step
     # reach Postgres by service name over the compose network. Publishing 5432
     # exposed the database on all host interfaces with default credentials.
     # To connect from the host, use "127.0.0.1:5432:5432" -- never "5432:5432",
     # which Docker opens to every interface via iptables rules that sit ahead
     # of ufw/firewalld.
+    #
+    # Mounted at the *parent* directory, not .../data: since the 18 image,
+    # the official image stores data in a major-version-specific subdirectory
+    # (PGDATA=/var/lib/postgresql/18/docker) and refuses to start if it finds
+    # data at the old .../data path instead -- see docker-library/postgres#1259.
+    # A volume populated by postgres 14-17 CANNOT be attached here directly;
+    # it must go through the migration procedure in README.md first.
     volumes:
-      - "dispatch-postgres:/var/lib/postgresql/data"
+      - "dispatch-postgres:/var/lib/postgresql"
+    # -h forces TCP. Without it pg_isready reaches the socket-only server the
+    # entrypoint runs during initdb and reports ready before the real one is
+    # listening -- measured 31s early on a fresh volume, so web and scheduler
+    # would start against a database that is still initialising. install.sh's
+    # own probe uses TCP for the same reason.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
   core:
     image: dispatch-local
     env_file:
@@ -30,8 +48,10 @@ services:
     <<: *restart_policy
     image: dispatch-local
     depends_on:
-      - postgres
-      - core
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_started
     env_file:
       - .env
     command: ["server", "start", "dispatch.main:app", "--host=0.0.0.0"]
@@ -41,8 +61,10 @@ services:
     <<: *restart_policy
     image: dispatch-local
     depends_on:
-      - postgres
-      - core
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_started
     env_file:
       - .env
     environment:
