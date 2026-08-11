@@ -19,7 +19,7 @@ on:
       - ".env.example"
       - ".github/workflows/image-checks.yml"
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - "docker-compose.yml"
       - "requirements.txt.example"
