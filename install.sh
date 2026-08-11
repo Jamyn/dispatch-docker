@@ -3,8 +3,8 @@ set -e
 
 COMPOSE_DOCKER_CLI_BUILD=0
 
-MIN_DOCKER_VERSION='17.05.0'
-MIN_COMPOSE_VERSION='1.19.0'
+MIN_DOCKER_VERSION='25.0.0'
+MIN_COMPOSE_VERSION='2.0.0'
 MIN_RAM=2400 # MB
 
 DISPATCH_CONFIG_ENV='./.env'
@@ -28,7 +28,7 @@ cleanup () {
     return 0;
   fi
   echo "Cleaning up..."
-  docker-compose stop &> /dev/null
+  docker compose stop &> /dev/null
   DID_CLEAN_UP=1
 }
 trap cleanup ERR INT TERM
@@ -36,7 +36,7 @@ trap cleanup ERR INT TERM
 echo "Checking minimum requirements..."
 
 DOCKER_VERSION=$(docker version --format '{{.Server.Version}}')
-COMPOSE_VERSION=$(docker-compose --version | grep -o "[0-9]\{1,2\}\.[0-9]\{1,2\}\.[0-9]\{1,2\}")
+COMPOSE_VERSION=$(docker compose version --short)
 RAM_AVAILABLE_IN_DOCKER=$(docker run --rm busybox free -m 2>/dev/null | awk '/Mem/ {print $2}');
 
 # Compare dot-separated strings - function below is inspired by https://stackoverflow.com/a/37939589/808368
@@ -77,7 +77,7 @@ if [ $(ver $DOCKER_VERSION) -lt $(ver $MIN_DOCKER_VERSION) ]; then
 fi
 
 if [ $(ver $COMPOSE_VERSION) -lt $(ver $MIN_COMPOSE_VERSION) ]; then
-    echo "FAIL: Expected minimum docker-compose version to be $MIN_COMPOSE_VERSION but found $COMPOSE_VERSION"
+    echo "FAIL: Expected minimum Docker Compose version to be $MIN_COMPOSE_VERSION but found $COMPOSE_VERSION"
     exit -1
 fi
 
@@ -92,7 +92,7 @@ ensure_file_from_example $DISPATCH_EXTRA_REQUIREMENTS
 source $DISPATCH_CONFIG_ENV
 
 # Clean up old stuff and ensure nothing is working while we install/update
-docker-compose down --rmi local --remove-orphans
+docker compose down --rmi local --remove-orphans
 
 echo ""
 echo "Creating volumes for persistent storage..."
@@ -165,12 +165,12 @@ fi
 echo ""
 echo "Pulling, building, and tagging Docker images..."
 echo ""
-docker-compose pull postgres
-docker-compose build ${COMPOSE_BUILD_ARGS} --force-rm
+docker compose pull postgres
+docker compose build ${COMPOSE_BUILD_ARGS} --force-rm
 echo ""
 echo "Docker images pulled and built."
 
-docker-compose up -d postgres
+docker compose up -d postgres
 
 # The database steps below connect immediately. Postgres accepts connections
 # only after the entrypoint has finished initialising the data directory, and
@@ -185,7 +185,7 @@ for _ in $(seq 1 30); do
     # `run` attaches stdin, so without -T and </dev/null the probe swallows the
     # input meant for the sample-data prompt below and a piped install dies on
     # that read returning EOF under `set -e`.
-    if docker-compose run --rm -T postgres pg_isready -h $DATABASE_HOSTNAME -p $DATABASE_PORT -q < /dev/null > /dev/null 2>&1; then
+    if docker compose run --rm -T postgres pg_isready -h $DATABASE_HOSTNAME -p $DATABASE_PORT -q < /dev/null > /dev/null 2>&1; then
         postgres_ready=1
         break
     fi
@@ -193,7 +193,7 @@ for _ in $(seq 1 30); do
 done
 if [ "$postgres_ready" -ne 1 ]; then
     echo "FAIL: Postgres did not accept connections within 60 seconds."
-    echo "      Inspect it with: docker-compose logs postgres"
+    echo "      Inspect it with: docker compose logs postgres"
     exit -1
 fi
 echo "Postgres is accepting connections."
@@ -207,9 +207,9 @@ if [ ! $CI ]; then
     # -f, or a 404 body is written to the dump file and loaded as if it were data.
     curl -f -# -o "./$DISPATCH_DB_SAMPLE_DATA_FILE" "$DISPATCH_DB_SAMPLE_DATA_URL"
     echo "Dropping database dispatch if it already exists..."
-    docker-compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" --rm postgres dropdb -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER $DATABASE_NAME --if-exists
+    docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" --rm postgres dropdb -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER $DATABASE_NAME --if-exists
     echo "Creating dispatch database..."
-    docker-compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" --rm postgres createdb -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER $DATABASE_NAME
+    docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" --rm postgres createdb -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER $DATABASE_NAME
     echo "Loading example data to the database..."
     # ON_ERROR_STOP, or psql exits 0 after failing every statement.
     docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" -v "$(pwd)/$DISPATCH_DB_SAMPLE_DATA_FILE:/$DISPATCH_DB_SAMPLE_DATA_FILE:Z" --rm postgres psql -v ON_ERROR_STOP=1 -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER -d $DATABASE_NAME -f "/$DISPATCH_DB_SAMPLE_DATA_FILE"
@@ -258,11 +258,11 @@ else
 fi
 
 echo "Running standard database migrations..."
-docker-compose run --rm web database upgrade
+docker compose run --rm web database upgrade
 
 echo ""
 echo "Installing plugins..."
-docker-compose run --rm web plugins install
+docker compose run --rm web plugins install
 
 cleanup
 
@@ -270,7 +270,7 @@ echo ""
 echo "----------------"
 echo "You're all done! Run the following command to get Dispatch running:"
 echo ""
-echo "  docker-compose up -d"
+echo "  docker compose up -d"
 echo ""
 echo "Once running, access the Dispatch UI at:"
 echo ""
@@ -311,12 +311,12 @@ if [ "$NEEDS_DB_PASSWORD_ROTATION" -eq 1 ]; then
   echo "changed in the running cluster and in $DISPATCH_CONFIG_ENV together:"
   echo ""
   echo "  1. new=\$(openssl rand -hex 24)"
-  echo "  2. docker-compose exec postgres \\"
+  echo "  2. docker compose exec postgres \\"
   echo "       psql -U $POSTGRES_USER -c \"ALTER USER $POSTGRES_USER WITH PASSWORD '\$new';\""
   echo "  3. Set both of these in $DISPATCH_CONFIG_ENV to match:"
   echo "       POSTGRES_PASSWORD=\$new"
   echo "       DATABASE_CREDENTIALS=${POSTGRES_USER}:\$new"
-  echo "  4. docker-compose up -d --force-recreate"
+  echo "  4. docker compose up -d --force-recreate"
   echo ""
   echo "----------------"
   echo ""
