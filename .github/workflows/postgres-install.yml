@@ -357,12 +357,16 @@ jobs:
             -d '{"email":"appupgrade@example.com","password":"SuperSecret123!"}' > register.json
           TOKEN=$(python3 -c "import json;print(json.load(open('register.json'))['token'])")
           echo "$TOKEN" > token.txt
-          # This step seeds against the OLD application pin, whose CLI still
-          # expects the pre-click-8.4 capitalised role value -- see the
-          # comment above scenario 1's role-update call for why the other
-          # two occurrences in this file are lowercase.
+          # This step seeds against the "previous" application pin. Since the
+          # 2026-08-11 history reset that pin is the same commit as the current
+          # one -- no earlier commit in the rebuilt history builds, because the
+          # spacy/thinc fix for the Python 3.14 base lands at the tip -- so this
+          # runs against today's CLI, which is click 8.4+ and validates against
+          # the lowercase enum NAME, not the capitalised value. Once a pin bump
+          # gives this scenario a genuinely older pin again, keep it lowercase:
+          # every release from v26.08.11 onward behaves this way.
           docker compose exec -T web \
-            dispatch user update --role Owner --organization default appupgrade@example.com
+            dispatch user update --role owner --organization default appupgrade@example.com
           curl -sf -X POST http://localhost:8000/api/v1/default/incident_priorities \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
             -d '{"name":"P1-App","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
