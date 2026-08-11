@@ -43,7 +43,86 @@ services:
       # Pro-tip: point this to a relative directory containing the Dispatch
       # project root to pick up changes from your dev environment
       # (e.g., ../dispatch-root)
-      context: https://github.com/Netflix/dispatch.git#latest
+      #
+      # Built from our own fork rather than Netflix/dispatch, which is archived.
+      #
+      # Pinned to a commit SHA, not a tag, for the same reason the postgres
+      # image above is pinned by digest: a tag can be repointed under us. That
+      # mattered less when this built from the archived Netflix repo, whose refs
+      # nobody can move, and matters again now that it builds from a live
+      # repository. d522a19d is branch base/main-debian-13, upstream's `main`
+      # (dd2837e8, its final state before archival, 457 commits past the old
+      # `latest`-based pin) plus this fork's fixes for breakage that jump
+      # introduced, and its dependency raises past known CVEs:
+      #  - a hatchling wheel-target exclude keeping the frontend's
+      #    node_modules out of the wheel, same fix as the old pin's
+      #    MANIFEST.in prune but expressed for `main`'s uv/hatchling build;
+      #  - `uv build` alone produced an EMPTY wheel: it builds an sdist
+      #    first, which flattens src/dispatch -> dispatch, no longer matching
+      #    the wheel target's packages=["src/dispatch"]. Fixed with
+      #    `uv build --wheel` plus actually running the frontend's build
+      #    (main's packaging never invoked it, so the wheel had no UI either);
+      #  - the same Debian 13 / postgres client 18 / pinned mjml 4.15.3 /
+      #    setuptools 81 work the old pin carried, re-applied here;
+      #  - `uv pip install --system` leaves an extracted copy of dispatch's
+      #    own source under /root/.cache/uv/, which trivy's secret scanner
+      #    (unlike its site-packages package scanner) walks as plain files
+      #    and flagged the Google plugin's credential-dict template as a
+      #    leaked GCP service-account key. False positive; purged the cache.
+      #  - hatchling's file selection dropped the just-built frontend dist/
+      #    specifically when building from THIS git remote context: verified
+      #    byte-identical on-disk files right up to the wheel-build call, and
+      #    reproduced with --no-cache, so not a caching artifact -- a local
+      #    directory build of the same commit packages dist/ correctly, a
+      #    git-context build of it didn't, and the exact mechanism wasn't
+      #    isolated past "context type". Fixed by declaring dist/ under
+      #    `artifacts`, hatchling's own force-include path for generated
+      #    files. Silent without this: the image builds and imports fine,
+      #    but serving any page 500s with "File at path .../dist/index.html
+      #    does not exist".
+      #  - `init_schema` opened its fulltext-search connection with
+      #    `engine.connect()` instead of `engine.begin()` (the schema-creation
+      #    connection two lines above it already used `begin()`).
+      #    SQLAlchemy 2.x's plain `connect()` does not autocommit, so every
+      #    search_vector trigger `sync_trigger` created was silently rolled
+      #    back on block exit -- verified 0 triggers existing anywhere after
+      #    a normal `database init`, 41 after the fix. search_vector stayed
+      #    permanently NULL on every full-text-searchable table app-wide.
+      #  - cryptography, lxml and protobuf raised past their known-vulnerable
+      #    versions. The cryptography <42 and protobuf <5.0dev upper
+      #    bounds were undocumented upstream downgrades; all three are pinned
+      #    exactly now, since this dependency set has no lockfile.
+      #    protobuf is held at the lowest fixing version, 5.29.6, rather than
+      #    the 7.x pip would otherwise take -- three majors up, where generated
+      #    _pb2 runtime compatibility is the usual break.
+      #    cryptography deliberately is NOT: 49.0.0 clears all five findings
+      #    that 41.0.7 had, but is itself affected by CVE-2026-69247, whose
+      #    range 41.0.7 predates. Taking the lowest fixing version there trades
+      #    five findings for a different one. 50.0.0 is the floor that holds.
+      #  - fastapi raised 0.115.12 -> 0.136.3 and starlette pinned explicitly
+      #    at 1.6.0 (previously transitive), clearing the remaining 3 HIGH
+      #    findings, all starlette, blocked behind fastapi's old
+      #    <0.47.0 upper bound. 0.136.3, not fastapi's latest 0.141.1: 0.137.0
+      #    began a lazy-router rewrite (_IncludedRouter, a stricter
+      #    include_router) that breaks two real things -- a plugin's events
+      #    router got its own class's timer/counter instrumentation decorator
+      #    wrapped around it (fixed, unrelated latent bug, callable() doesn't
+      #    distinguish a router from a method) and, more seriously,
+      #    dispatch's own get_path_params_from_request (used by
+      #    db_session_middleware on every request) assumes every route has a
+      #    .path attribute, which a lazy _IncludedRouter doesn't have. 0.136.3
+      #    predates that rewrite entirely, has no known CVEs itself, and
+      #    still resolves the same starlette 1.6.0. Verified end-to-end: /,
+      #    /default/auth/register, /healthcheck and /api/v1/docs (redoc, the
+      #    one that actually walks the included-router tree) all 200 under
+      #    0.136.3, where 0.141.1 500'd the last of those.
+      #
+      # KNOWN: `pip show dispatch` reports 0.1.0 on this image. versioningit
+      # reads the version from `git describe --tags`, and this repo's only
+      # tag is `latest`, which doesn't match versioningit's default `v*`
+      # pattern -- upstream's own builds of `main` produce the same 0.1.0.
+      # Not a regression introduced by this pin.
+      context: https://github.com/Jamyn/dispatch.git#d522a19d331297d7bdb56d384a27dcd4c1938af3
   web:
     <<: *restart_policy
     image: dispatch-local
