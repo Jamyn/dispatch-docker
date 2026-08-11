@@ -10,9 +10,10 @@ MIN_RAM=2400 # MB
 DISPATCH_CONFIG_ENV='./.env'
 DISPATCH_EXTRA_REQUIREMENTS='./requirements.txt'
 
-# Sentinel values shipped in .env.example. These must match the placeholders in
-# .env.example exactly (note the spelling of the first), or the corresponding
-# generation below silently no-ops and leaves the shipped value in place.
+# PLACEHOLDER_SECRET must match the sentinel in .env.example exactly (note the
+# spelling), or the generation below silently no-ops and ships that value live.
+# DEFAULT_DB_PASSWORD is no longer in .env.example; it is kept so an .env written
+# before the password became a placeholder is still treated as uninitialised.
 PLACEHOLDER_SECRET='REPLACEWITHSOMETHIINGSECRET'
 DEFAULT_DB_PASSWORD='dispatch'
 
@@ -133,12 +134,15 @@ else
     echo "Leaving existing DISPATCH_ENCRYPTION_KEY..."
 fi
 
-# The database password ships as the well-known default "dispatch". The postgres
-# image only applies POSTGRES_PASSWORD while initializing a data directory, so
-# generating one against an existing cluster would leave the server on the old
-# password and break every connection -- hence the same volume gate.
+# The database password ships as the placeholder. The postgres image only applies
+# POSTGRES_PASSWORD while initializing a data directory, so generating one against
+# an existing cluster would leave the server on the old password and break every
+# connection -- hence the same volume gate. Both the placeholder and the historic
+# "dispatch" default count as unset, or an .env from either era ships as live.
 NEEDS_DB_PASSWORD_ROTATION=0
-if [ "$POSTGRES_PASSWORD" != "$DEFAULT_DB_PASSWORD" ]; then
+if [ -n "$POSTGRES_PASSWORD" ] &&
+   [ "$POSTGRES_PASSWORD" != "$DEFAULT_DB_PASSWORD" ] &&
+   [ "$POSTGRES_PASSWORD" != "$PLACEHOLDER_SECRET" ]; then
     echo "Leaving existing POSTGRES_PASSWORD..."
 elif [ -z "$EXISTING_PG_DATA" ]; then
     echo "Generating POSTGRES_PASSWORD..."
@@ -156,7 +160,7 @@ elif [ -z "$EXISTING_PG_DATA" ]; then
     echo "POSTGRES_PASSWORD and DATABASE_CREDENTIALS written to $DISPATCH_CONFIG_ENV"
 else
     NEEDS_DB_PASSWORD_ROTATION=1
-    echo "WARNING: POSTGRES_PASSWORD is still the shipped default."
+    echo "WARNING: POSTGRES_PASSWORD is still the shipped placeholder."
     echo "         This install already has database data, so the password is NOT"
     echo "         rotated automatically - the running cluster would keep the old"
     echo "         one and every connection would fail."
@@ -304,9 +308,11 @@ if [ "$NEEDS_ENCRYPTION_KEY_ROTATION" -eq 1 ]; then
 fi
 
 if [ "$NEEDS_DB_PASSWORD_ROTATION" -eq 1 ]; then
-  echo "ACTION REQUIRED: the database password is the shipped default"
+  echo "ACTION REQUIRED: the database password is the shipped placeholder"
   echo ""
-  echo "This install authenticates to Postgres as ${POSTGRES_USER}:${DEFAULT_DB_PASSWORD}."
+  echo "The ${POSTGRES_USER} password in $DISPATCH_CONFIG_ENV is a shipped value, not a"
+  echo "real secret: the historic default is public knowledge, and the placeholder"
+  echo "will not authenticate at all."
   echo "Unlike the encryption key this can be rotated in place, but it has to be"
   echo "changed in the running cluster and in $DISPATCH_CONFIG_ENV together:"
   echo ""
