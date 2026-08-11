@@ -6,9 +6,15 @@ services:
     <<: *restart_policy
     env_file:
       - .env
-    image: postgres:14.6
-    ports:
-      - "5432:5432"
+    # Digest of the multi-arch manifest list for 14.6 (amd64 + arm64/v8 + arm),
+    # so the tag cannot be repointed under us. Update tag and digest together.
+    image: postgres:14.6@sha256:f565573d74aedc9b218e1d191b04ec75bdd50c33b2d44d91bcd3db5f2fcea647
+    # No host port mapping: web, scheduler, and every install.sh database step
+    # reach Postgres by service name over the compose network. Publishing 5432
+    # exposed the database on all host interfaces with default credentials.
+    # To connect from the host, use "127.0.0.1:5432:5432" -- never "5432:5432",
+    # which Docker opens to every interface via iptables rules that sit ahead
+    # of ufw/firewalld.
     volumes:
       - "dispatch-postgres:/var/lib/postgresql/data"
   core:
