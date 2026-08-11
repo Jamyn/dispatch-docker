@@ -29,7 +29,7 @@ jobs:
       # apply is an unsatisfiable gate: `dependencies` and `skip-changelog`
       # were both listed here while undefined, and `feature` duplicated
       # `enhancement`. Add a name here only alongside creating the label.
-      - uses: yogevbd/enforce-label-action@2.1.0
+      - uses: yogevbd/enforce-label-action@a3c219da6b8fa73f6ba62b68ff09c469b3a1c024 # 2.2.2
         with:
           REQUIRED_LABELS_ANY: "bug,enhancement,documentation,maintenance,security,ci,breaking-change"
           REQUIRED_LABELS_ANY_DESCRIPTION: "Select at least one label ['bug','enhancement','documentation','maintenance','security','ci','breaking-change']"

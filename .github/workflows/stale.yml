@@ -3,11 +3,20 @@ on:
   schedule:
   - cron: "0 0 * * *"
 
+permissions: {}
+
 jobs:
   stale:
     runs-on: ubuntu-latest
+    # Only the scopes this configuration actually uses: labelling, commenting
+    # and closing issues and PRs. The action's README also lists `actions: write`
+    # and `contents: write`, but those cover cache management and the
+    # `delete-branch` option, neither of which is enabled here.
+    permissions:
+      issues: write # label, comment on and close stale issues
+      pull-requests: write # label, comment on and close stale PRs
     steps:
-    - uses: actions/stale@v3
+    - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         stale-issue-message: 'This issue is stale, because it has been open for 30 days with no activity. Remove the stale label or comment, or this will be closed in 5 days.'
