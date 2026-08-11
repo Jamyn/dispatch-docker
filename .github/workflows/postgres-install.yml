@@ -1,0 +1,411 @@
+name: Postgres install
+
+# Regression coverage for the three scenarios that matter for this repo's
+# pins: a brand new install against the currently-pinned image, an existing
+# install crossing a Postgres major version via the documented dump/restore
+# procedure in README.md ("Upgrading Postgres to a new major version"), and
+# an existing install crossing an application build-context repin via
+# install.sh's ordinary rebuild-and-migrate path. See CLAUDE.md for why the
+# volume mount path matters here.
+#
+# All three scenarios deliberately live in ONE job. They each need the same
+# dispatch-local image, and that build is roughly 5 of the 6 minutes a run
+# takes. As separate jobs they landed on separate runners and each paid for a
+# cold build. Sharing a runner means the second and third install.sh runs hit
+# the local buildkit cache instead where nothing changed the `core` build
+# context (measured at ~3 seconds against ~5 minutes for scenario 2; scenario
+# 3 pays for exactly one more cold build, the old application pin's seed
+# install). The tradeoff is wall-clock, since the scenarios now run in
+# sequence rather than in parallel.
+#
+# Data is seeded through Dispatch's own API rather than with SQL, so the write
+# path that matters (ORM, relationship resolution, the commander participant,
+# and the search_vector tsvector trigger) is what actually gets exercised
+# across the upgrade. Upstream being archived makes this safe rather than
+# risky: the request and response shapes are frozen and cannot drift.
+#
+# The incidents payload must include `description`. It is required by
+# IncidentBase and omitting it returns 422, which is what broke the first
+# version of this workflow.
+
+# Expensive (~6 min); runs only when explicitly dispatched or when a
+# release tag is pushed.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+# Supersede in-flight runs for the same ref. Iterating on a branch previously
+# left every earlier run going to completion alongside the newest one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Reading the repository is all this workflow does with the token; every other
+# scope is dropped. It builds and runs containers and never writes back.
+permissions:
+  contents: read
+
+jobs:
+  postgres-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # persist-credentials: false because nothing after this step uses git.
+      # Left at the default, the token stays in .git/config for the rest of the
+      # job, where every container command below could read it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare .env and requirements
+        run: |
+          cp .env.example .env
+          cp requirements.txt.example requirements.txt
+
+      # ---------------------------------------------------------------
+      # Scenario 1: fresh install against the currently-pinned Postgres
+      # ---------------------------------------------------------------
+
+      # Actions sets CI=true, so install.sh skips its sample-data prompt
+      # entirely. `database init` is gated on the schema being absent rather
+      # than on that prompt, so a fresh non-interactive install still
+      # initialises correctly. This is also the run that pays for the image
+      # build; everything after it reuses the cache.
+      - name: Run install.sh
+        run: ./install.sh
+
+      # Regression test for two `database init` bugs: it is not idempotent
+      # upstream (it re-inserts the built-in plugin rows and trips
+      # plugin_slug_key), and it used to be skipped entirely when CI is set,
+      # which left `database upgrade` to fail against a virgin database.
+      # install.sh is the documented upgrade path, so a re-run has to stay
+      # green and must not rotate credentials that cannot be rotated safely.
+      - name: Re-run install.sh (must be idempotent and must not rotate secrets)
+        run: |
+          set -euo pipefail
+          before_pw=$(grep '^POSTGRES_PASSWORD=' .env)
+          before_key=$(grep '^DISPATCH_ENCRYPTION_KEY=' .env)
+          ./install.sh | tee rerun.log
+          grep -q 'Existing Dispatch database detected' rerun.log
+          test "$(grep '^POSTGRES_PASSWORD=' .env)" = "$before_pw"
+          test "$(grep '^DISPATCH_ENCRYPTION_KEY=' .env)" = "$before_key"
+
+      - name: Start the full stack
+        run: docker compose up -d
+
+      - name: Wait for the API and smoke-test it
+        run: |
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+          curl -sf -o /dev/null http://localhost:8000/
+
+      - name: Verify the Dispatch schema was created
+        run: |
+          set -euo pipefail
+          schemas=$(docker compose exec -T postgres \
+            psql -U dispatch -d dispatch -tAc \
+            "select string_agg(nspname, ',' order by nspname) from pg_namespace where nspname like 'dispatch%'")
+          echo "schemas: $schemas"
+          test "$schemas" = "dispatch_core,dispatch_organization_default"
+          tables=$(docker compose exec -T postgres \
+            psql -U dispatch -d dispatch -tAc \
+            "select count(*) from information_schema.tables where table_schema like 'dispatch%'")
+          echo "tables: $tables"
+          test "$tables" -gt 90
+
+      - name: Register a user and create an incident end-to-end
+        run: |
+          set -euo pipefail
+          curl -sf -X POST http://localhost:8000/api/v1/default/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci@example.com","password":"SuperSecret123!"}' > register.json
+          TOKEN=$(python3 -c "import json;print(json.load(open('register.json'))['token'])")
+          # click 8.4.2 (on the new pin) validates Choice(UserRoles) against
+          # enum names, not values -- 'owner' now, not 'Owner'. Scenario 3's
+          # seed-on-the-old-pin step still needs the old casing.
+          docker compose exec -T web \
+            dispatch user update --role owner --organization default ci@example.com
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_priorities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"P1-CI","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_severities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"SEV-CI","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_types \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"Type-CI","description":"ci","visibility":"Open","project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"title":"CI incident","description":"created by CI","status":"Active","visibility":"Open","incident_priority":{"name":"P1-CI"},"incident_severity":{"name":"SEV-CI"},"incident_type":{"name":"Type-CI"},"project":{"name":"default"}}' \
+            > incident.json
+          python3 -c "import json; d=json.load(open('incident.json')); assert d['title']=='CI incident', d; print('incident id', d['id'])"
+          # Prove the write reached Postgres through the ORM, including the
+          # tsvector trigger that populates search_vector.
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident where title = 'CI incident' and search_vector is not null" \
+            | grep -qx 1
+
+      # ---------------------------------------------------------------
+      # Reset to a clean slate, then scenario 2 on the same runner. The
+      # image and buildkit cache survive this; only the containers, the
+      # database volume, and the generated .env are discarded.
+      # ---------------------------------------------------------------
+
+      - name: Tear down scenario 1
+        run: |
+          set -euo pipefail
+          docker compose down --remove-orphans
+          # The volume is declared external, so `down` leaves it behind.
+          docker volume rm -f dispatch-postgres
+          rm -f register.json incident.json rerun.log
+          # Start scenario 2 from a pristine .env, exactly as a fresh checkout
+          # would, so install.sh exercises real secret generation again.
+          cp .env.example .env
+          cp requirements.txt.example requirements.txt
+
+      # ---------------------------------------------------------------
+      # Scenario 2: 14.6 -> 18.4 via the documented dump/restore procedure
+      # ---------------------------------------------------------------
+
+      - name: Point docker-compose.yml at the previous Postgres major (14.6) for the seed install
+        run: |
+          set -euo pipefail
+          sed -i 's#image: postgres:18\.4@sha256:[a-f0-9]*#image: postgres:14.6@sha256:f565573d74aedc9b218e1d191b04ec75bdd50c33b2d44d91bcd3db5f2fcea647#' docker-compose.yml
+          sed -i 's#"dispatch-postgres:/var/lib/postgresql"#"dispatch-postgres:/var/lib/postgresql/data"#' docker-compose.yml
+          grep -n 'postgres:14.6' docker-compose.yml
+          grep -n 'lib/postgresql/data' docker-compose.yml
+
+      # The image build here is a cache hit: rewriting the postgres image and
+      # mount path above does not touch the `core` build context.
+      - name: Seed a real Dispatch install on the old Postgres version
+        run: |
+          set -euo pipefail
+          ./install.sh
+          docker compose up -d
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+          curl -sf -X POST http://localhost:8000/api/v1/default/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"upgrade@example.com","password":"SuperSecret123!"}' > register.json
+          TOKEN=$(python3 -c "import json;print(json.load(open('register.json'))['token'])")
+          echo "$TOKEN" > token.txt
+          docker compose exec -T web \
+            dispatch user update --role owner --organization default upgrade@example.com
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_priorities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"P1-Upgrade","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_severities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"SEV-Upgrade","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_types \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"Type-Upgrade","description":"ci","visibility":"Open","project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"title":"pre-upgrade incident","description":"seeded by CI","status":"Active","visibility":"Open","incident_priority":{"name":"P1-Upgrade"},"incident_severity":{"name":"SEV-Upgrade"},"incident_type":{"name":"Type-Upgrade"},"project":{"name":"default"}}' \
+            > incident.json
+          python3 -c "import json; d=json.load(open('incident.json')); assert d['title']=='pre-upgrade incident', d"
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident where title = 'pre-upgrade incident' and search_vector is not null" \
+            | grep -qx 1
+
+      - name: Perform the documented pg_dumpall upgrade to 18.4
+        run: |
+          set -euo pipefail
+          source .env
+          docker compose stop core web scheduler
+          docker compose exec -T postgres pg_dumpall -U "$POSTGRES_USER" > dispatch-dump.sql
+          grep -q "pre-upgrade incident" dispatch-dump.sql
+          docker compose stop postgres
+          docker volume create dispatch-postgres-new
+          docker run -d --name pg-upgrade-target --env-file .env \
+            -v dispatch-postgres-new:/var/lib/postgresql \
+            postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+          # Wait for a query to succeed repeatedly: the entrypoint starts a
+          # temporary server during initialisation, so a single successful
+          # probe can be answered by a server that is about to shut down.
+          ok=0
+          for _ in $(seq 1 60); do
+            if docker exec pg-upgrade-target psql -U dispatch -d dispatch -tAc 'select 1' >/dev/null 2>&1; then
+              ok=$((ok + 1))
+            else
+              ok=0
+            fi
+            [ "$ok" -ge 3 ] && break
+            sleep 1
+          done
+          test "$ok" -ge 3
+          docker exec -i --env PGPASSWORD="$POSTGRES_PASSWORD" pg-upgrade-target \
+            psql -U "$POSTGRES_USER" -d postgres < dispatch-dump.sql > restore.log 2>&1
+          # Only the two expected already-exists errors (role, database) are
+          # tolerated; anything else means the restore did not apply cleanly.
+          grep '^ERROR' restore.log || true
+          test "$(grep -c '^ERROR' restore.log)" -le 2
+          if grep '^ERROR' restore.log | grep -qv 'already exists'; then
+            echo "unexpected restore error"
+            exit 1
+          fi
+          docker stop pg-upgrade-target && docker rm pg-upgrade-target
+          # `docker compose stop` above is not enough: a stopped container still
+          # holds a reference to its volumes, so the remove below fails with
+          # "volume is in use" until the containers themselves are gone. This
+          # mirrors Option B of the README procedure.
+          docker compose down --remove-orphans
+          docker volume rm dispatch-postgres
+          docker volume create dispatch-postgres
+          docker run --rm -v dispatch-postgres-new:/from -v dispatch-postgres:/to busybox cp -a /from/. /to/
+
+      - name: Restore docker-compose.yml to the pinned target version and start Dispatch
+        run: |
+          set -euo pipefail
+          git checkout -- docker-compose.yml
+          docker compose up -d
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+          docker compose run --rm web database upgrade
+
+      - name: Verify Postgres version and that pre-upgrade data survived
+        run: |
+          set -euo pipefail
+          version=$(docker compose exec -T postgres psql -U dispatch -d dispatch -tAc 'show server_version')
+          echo "server_version: $version"
+          case "$version" in 18.*) ;; *) echo "expected Postgres 18"; exit 1 ;; esac
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident where title = 'pre-upgrade incident'" \
+            | grep -qx 1
+          # The GIN/tsvector indexes are the most upgrade-sensitive objects here.
+          indexes=$(docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname like 'dispatch%'")
+          echo "indexes: $indexes"
+          test "$indexes" -gt 150
+
+      - name: Verify the upgraded database is readable and writable through the app
+        run: |
+          set -euo pipefail
+          # Assert the restored user row directly, and do it before any
+          # authenticated request. Token validation is stateless (the JWT is
+          # decoded with DISPATCH_JWT_SECRET from .env, which is unchanged) and
+          # resolves the user with get_or_create, so a surviving token would
+          # silently recreate a missing user and hide a failed restore.
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_core.dispatch_user where email = 'upgrade@example.com'" \
+            | grep -qx 1
+          TOKEN=$(cat token.txt)
+          curl -sf http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" > incidents.json
+          python3 -c "
+          import json
+          d = json.load(open('incidents.json'))
+          items = d['items'] if isinstance(d, dict) and 'items' in d else d
+          titles = [i.get('title') for i in items]
+          print('titles:', titles)
+          assert 'pre-upgrade incident' in titles, titles
+          "
+          # A fresh write through the ORM against the upgraded cluster, which
+          # also exercises the sequences carried over by the restore.
+          curl -sf -X POST http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"title":"post-upgrade incident","description":"written after the upgrade","status":"Active","visibility":"Open","incident_priority":{"name":"P1-Upgrade"},"incident_severity":{"name":"SEV-Upgrade"},"incident_type":{"name":"Type-Upgrade"},"project":{"name":"default"}}' \
+            > post.json
+          python3 -c "import json; d=json.load(open('post.json')); assert d['title']=='post-upgrade incident', d; print('post-upgrade incident id', d['id'])"
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident where search_vector is not null" \
+            | grep -qx 2
+
+      # ---------------------------------------------------------------
+      # Scenario 3: application upgrade across the build-context repin.
+      # Seeds an install from the OLD application pin, then re-runs
+      # install.sh against the current checkout, which rebuilds from the
+      # new pin and runs `database upgrade` -- the alembic migrations the
+      # commit jump carries. Data must survive and the app must still write.
+      # ---------------------------------------------------------------
+
+      - name: Tear down scenario 2
+        run: |
+          set -euo pipefail
+          docker compose down --remove-orphans
+          docker volume rm -f dispatch-postgres dispatch-postgres-new
+          rm -f register.json incident.json token.txt rerun.log dispatch-dump.sql restore.log
+          git checkout -- docker-compose.yml
+          cp .env.example .env
+          cp requirements.txt.example requirements.txt
+
+      - name: Point the build context at the previous application pin
+        run: |
+          set -euo pipefail
+          sed -i 's#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#d522a19d331297d7bdb56d384a27dcd4c1938af3#' docker-compose.yml
+          grep -n 'd522a19d331297d7bdb56d384a27dcd4c1938af3' docker-compose.yml
+
+      - name: Seed a Dispatch install on the old application version
+        run: |
+          set -euo pipefail
+          ./install.sh
+          docker compose up -d
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+          curl -sf -X POST http://localhost:8000/api/v1/default/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"appupgrade@example.com","password":"SuperSecret123!"}' > register.json
+          TOKEN=$(python3 -c "import json;print(json.load(open('register.json'))['token'])")
+          echo "$TOKEN" > token.txt
+          # This step seeds against the OLD application pin, whose CLI still
+          # expects the pre-click-8.4 capitalised role value -- see the
+          # comment above scenario 1's role-update call for why the other
+          # two occurrences in this file are lowercase.
+          docker compose exec -T web \
+            dispatch user update --role Owner --organization default appupgrade@example.com
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_priorities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"P1-App","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_severities \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"SEV-App","description":"ci","view_order":1,"project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incident_types \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"name":"Type-App","description":"ci","visibility":"Open","project":{"name":"default"}}' > /dev/null
+          curl -sf -X POST http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"title":"pre-app-upgrade incident","description":"seeded by CI","status":"Active","visibility":"Open","incident_priority":{"name":"P1-App"},"incident_severity":{"name":"SEV-App"},"incident_type":{"name":"Type-App"},"project":{"name":"default"}}' \
+            > incident.json
+          python3 -c "import json; d=json.load(open('incident.json')); assert d['title']=='pre-app-upgrade incident', d"
+
+      - name: Upgrade to the current application pin via install.sh
+        run: |
+          set -euo pipefail
+          docker compose down
+          git checkout -- docker-compose.yml
+          ./install.sh
+          docker compose up -d
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+
+      - name: Verify data survived and the app still writes
+        run: |
+          set -euo pipefail
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident where title = 'pre-app-upgrade incident'" \
+            | grep -qx 1
+          curl -sf -X POST http://localhost:8000/api/v1/default/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"appupgrade@example.com","password":"SuperSecret123!"}' > login.json
+          TOKEN=$(python3 -c "import json;print(json.load(open('login.json'))['token'])")
+          curl -sf -X POST http://localhost:8000/api/v1/default/incidents \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"title":"post-app-upgrade incident","description":"created after upgrade","status":"Active","visibility":"Open","incident_priority":{"name":"P1-App"},"incident_severity":{"name":"SEV-App"},"incident_type":{"name":"Type-App"},"project":{"name":"default"}}' \
+            > post-incident.json
+          python3 -c "import json; d=json.load(open('post-incident.json')); assert d['title']=='post-app-upgrade incident', d"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
