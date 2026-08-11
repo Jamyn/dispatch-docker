@@ -97,15 +97,11 @@ jobs:
           readme.write_text(r)
 
           # The upgrade scenario seeds from the pin being replaced, so the test
-          # keeps covering the jump operators will actually perform.
-          # Scoped to the build-context URL on purpose: a bare 40-hex search
-          # also matches this file's action SHA pins.
-          wf = pathlib.Path(".github/workflows/postgres-install.yml")
-          w = wf.read_text()
-          prev = set(re.findall(r"dispatch\.git\\?#([0-9a-f]{40})", w))
-          assert len(prev) == 1, f"expected one old pin, found {prev}"
-          w = w.replace(prev.pop(), old)
-          wf.write_text(w)
+          # keeps covering the jump operators will actually perform. It reads
+          # this data file rather than carrying the SHA inline, because
+          # GITHUB_TOKEN cannot push a workflow-file change and no `workflows`
+          # permission scope exists to grant it.
+          pathlib.Path(".github/upgrade-from-pin").write_text(old + "\n")
           PY
           git diff --stat
 

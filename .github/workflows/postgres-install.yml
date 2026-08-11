@@ -337,11 +337,18 @@ jobs:
           cp .env.example .env
           cp requirements.txt.example requirements.txt
 
+      # The pin lives in a data file, not inline here: app-pin-bump rolls it on
+      # every bump, and GITHUB_TOKEN cannot push a change to a workflow file --
+      # there is no `workflows` permission scope to grant it.
       - name: Point the build context at the previous application pin
         run: |
           set -euo pipefail
-          sed -i 's#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#f22af93a3b3172c01aa24c5664bcfb2aaeef9f86#' docker-compose.yml
-          grep -n 'f22af93a3b3172c01aa24c5664bcfb2aaeef9f86' docker-compose.yml
+          prev=$(tr -d '[:space:]' < .github/upgrade-from-pin)
+          printf '%s' "$prev" | grep -qE '^[0-9a-f]{40}$' || {
+            echo "bad previous pin: $prev"; exit 1
+          }
+          sed -i "s#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#${prev}#" docker-compose.yml
+          grep -n "$prev" docker-compose.yml
 
       - name: Seed a Dispatch install on the old application version
         run: |
