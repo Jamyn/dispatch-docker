@@ -108,7 +108,12 @@ fill_uninitialised_secret "DISPATCH_JWT_SECRET"
 # so the absence of PG_VERSION is a reliable "nothing to lose" signal.
 # The `|| true` is load-bearing: on a fresh volume the file is absent and `cat`
 # exits non-zero, which under `set -e` would abort the install on the assignment.
-EXISTING_PG_DATA="$(docker run --rm -v dispatch-postgres:/db busybox cat /db/PG_VERSION 2>/dev/null || true)"
+# Since postgres 18, the official image stores PG_VERSION under a major-version
+# subdirectory (/db/<major>/docker/PG_VERSION) instead of at the volume root,
+# so both locations must be checked -- checking only the old path would read as
+# "empty volume" against a real 18+ cluster and silently attempt to regenerate
+# POSTGRES_PASSWORD/DISPATCH_ENCRYPTION_KEY on every install.sh run.
+EXISTING_PG_DATA="$(docker run --rm -v dispatch-postgres:/db busybox sh -c 'cat /db/PG_VERSION 2>/dev/null; cat /db/*/docker/PG_VERSION 2>/dev/null' || true)"
 
 # DISPATCH_ENCRYPTION_KEY encrypts plugin configuration (Slack tokens, OAuth
 # client secrets, SMTP credentials) at rest. Unlike the two secrets above it
@@ -209,11 +214,49 @@ if [ ! $CI ]; then
     # ON_ERROR_STOP, or psql exits 0 after failing every statement.
     docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" -v "$(pwd)/$DISPATCH_DB_SAMPLE_DATA_FILE:/$DISPATCH_DB_SAMPLE_DATA_FILE:Z" --rm postgres psql -v ON_ERROR_STOP=1 -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER -d $DATABASE_NAME -f "/$DISPATCH_DB_SAMPLE_DATA_FILE"
     echo "Example data loaded. Navigate to /default/auth/register and create a new user."
-  else
-    echo "Initializing the database"
-    docker-compose run --rm web database init
   fi
 fi
+
+# Initialise the schema when, and only when, it is actually missing.
+#
+# This deliberately sits outside the `[ ! $CI ]` block above. `database upgrade`
+# below is an alembic migration run, not a schema creator: against a virgin
+# database its migrations fail on the first table they try to alter
+# ("relation dispatch_user_organization does not exist"). Because CI runners set
+# CI=true, the old placement skipped `database init` there and every non
+# interactive fresh install died at the migration step.
+#
+# Gating on the schema rather than on the prompt also makes the script safe to
+# re-run, which it has to be since it is the documented upgrade path. Upstream's
+# `database init` is not idempotent: it re-inserts the built-in plugin rows and
+# dies on the plugin_slug_key unique constraint against an existing database
+# (verified 2026-08-08, identical failure on postgres 14.6 and 18.4, so this is
+# upstream application behaviour and not a Postgres version issue).
+#
+# The check is on the schema rather than on EXISTING_PG_DATA above because a
+# populated volume does not imply an initialised Dispatch schema: an earlier run
+# can create the cluster and then fail before init. The sample data path leaves
+# a fully populated schema behind, so it correctly skips init too.
+#
+# `-T` plus the redirect keep this off stdin for the same reason as the
+# readiness probe above. Any failure here falls through to running init.
+DISPATCH_SCHEMA_PRESENT="$(docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" --rm -T postgres \
+  psql -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER -d $DATABASE_NAME \
+  -tAc "select to_regclass('dispatch_core.alembic_version') is not null" \
+  < /dev/null 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$DISPATCH_SCHEMA_PRESENT" = "t" ]; then
+  echo "Existing Dispatch database detected, skipping initialization."
+else
+  echo "Initializing the database"
+  # `database init` now asks for interactive confirmation before touching a
+  # database (upstream a97c011e): it prompts for the hostname, then the
+  # database name, echoing each configured value as the expected answer.
+  # Piping those same values back answers both prompts non-interactively;
+  # -T is needed here (not the readiness probe's /dev/null pattern) because
+  # stdin has to carry real input, not be discarded.
+  printf '%s\n%s\n' "$DATABASE_HOSTNAME" "$DATABASE_NAME" | docker compose run --rm -T web database init
+fi
+
 echo "Running standard database migrations..."
 docker-compose run --rm web database upgrade
 
