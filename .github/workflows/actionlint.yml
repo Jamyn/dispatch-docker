@@ -1,0 +1,47 @@
+name: actionlint
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      # sha256 of actionlint_1.7.12_linux_amd64.tar.gz, captured from the
+      # release and verified locally when this workflow was written -- not
+      # re-fetched from the same release at runtime, since a checksums.txt
+      # pulled from the same place as the binary only proves the two are
+      # self-consistent, not that the release wasn't tampered with. Update
+      # this alongside ACTIONLINT_VERSION, verifying the new hash out of band.
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Downloaded and hash-verified directly rather than via a third-party
+      # action, to keep this repo's Actions trust surface no larger than the
+      # SHA-pinning policy already requires (Settings -> Actions -> General).
+      # actionlint auto-detects the shellcheck already preinstalled on
+      # ubuntu-latest, so `run:` steps inside workflows get linted too.
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          curl -sSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum -c
+          tar xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
+          sudo install actionlint /usr/local/bin/actionlint
+
+      - run: actionlint

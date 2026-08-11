@@ -1,0 +1,35 @@
+name: shellcheck
+
+on:
+  pull_request:
+    paths:
+      - "install.sh"
+      - ".github/workflows/shellcheck.yml"
+  push:
+    branches: [master]
+    paths:
+      - "install.sh"
+      - ".github/workflows/shellcheck.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ubuntu-latest ships shellcheck preinstalled -- no action or download needed.
+      #
+      # SC1090, SC2034, SC2046, SC2086, SC2116, SC2162, and SC2242 are excluded
+      # because they're pre-existing, inherited-from-upstream findings this repo
+      # has already accepted (see CLAUDE.md's verification table), not bugs to
+      # fix here. Some are also deliberate: COMPOSE_BUILD_ARGS relies on its own
+      # unquoted word-splitting to expand into multiple --build-arg flags, so
+      # "fixing" that SC2086/SC2046 pair would actually break it.
+      - run: shellcheck --exclude=SC1090,SC2034,SC2046,SC2086,SC2116,SC2162,SC2242 install.sh

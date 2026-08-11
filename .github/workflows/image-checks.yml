@@ -1,0 +1,190 @@
+name: Image checks
+
+# Assertions about the built dispatch-local image itself, as opposed to the
+# installer and the Postgres pin, which postgres-install.yml covers. Both
+# workflows build the same image, but they answer different questions and are
+# kept apart so neither accumulates steps belonging to the other.
+#
+# Runs on the inputs that change the image -- the application pin in
+# docker-compose.yml, the extra plugins in requirements.txt.example, and the
+# VITE_* build args read out of .env.example -- and weekly on unchanged
+# sources, since new CVEs are disclosed against already-built software
+# constantly.
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - "requirements.txt.example"
+      - ".env.example"
+      - ".github/workflows/image-checks.yml"
+  push:
+    branches: [master]
+    paths:
+      - "docker-compose.yml"
+      - "requirements.txt.example"
+      - ".env.example"
+      - ".github/workflows/image-checks.yml"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  image-checks:
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_VERSION: "0.73.0"
+      # sha256 of trivy_0.73.0_Linux-64bit.tar.gz, captured from the release
+      # and verified locally when this workflow was written -- not re-fetched
+      # from the same release at runtime, since a checksums.txt pulled from
+      # the same place as the binary only proves the two are self-consistent,
+      # not that the release wasn't tampered with. Update this alongside
+      # TRIVY_VERSION, verifying the new hash out of band.
+      TRIVY_SHA256: "2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the dispatch-local image
+        run: |
+          cp .env.example .env
+          cp requirements.txt.example requirements.txt
+          docker compose build
+
+      # MJML_PATH's default points inside the wheel, at a node_modules tree
+      # MANIFEST.in prunes. The image supplies its own mjml and overrides the
+      # variable to match; when that agreement broke, every email notification
+      # raised FileNotFoundError and nothing caught it.
+      - name: Render an mjml template through MJML_PATH
+        run: |
+          set -euo pipefail
+          cat > /tmp/fixture.mjml <<'EOF'
+          <mjml><mj-body><mj-section><mj-column>
+          <mj-text>dispatch-mjml-canary</mj-text>
+          </mj-column></mj-section></mj-body></mjml>
+          EOF
+          docker run --rm -v /tmp/fixture.mjml:/tmp/fixture.mjml:ro \
+            --entrypoint bash dispatch-local -c '
+              set -euo pipefail
+              test -n "${MJML_PATH:-}" || { echo "MJML_PATH is unset"; exit 1; }
+              test -x "$MJML_PATH/mjml" || { echo "no mjml binary at $MJML_PATH"; exit 1; }
+              # cd first: render_html invokes mjml with cwd=MJML_PATH, so this
+              # reproduces the call that actually broke rather than an easier one.
+              cd "$MJML_PATH"
+              out=$(./mjml /tmp/fixture.mjml -s)
+              grep -q "dispatch-mjml-canary" <<<"$out"
+              echo "mjml rendered ${#out} bytes"
+            '
+
+      # cryptography and protobuf carried undocumented upstream upper bounds
+      # (<42, <5.0dev) that held seven HIGH findings open; the CVE work raised all three
+      # of these past them. The stated risk of moving them was a regression in
+      # the Google plugins, which nothing here exercised -- trivy only reads
+      # METADATA, and an import failure in a plugin is invisible to it. Asserts
+      # minimums, not exact versions, so a later bump doesn't need a second edit.
+      - name: Exercise the dependency surfaces behind the raised pins
+        run: |
+          set -euo pipefail
+          docker run --rm --env-file .env --entrypoint python dispatch-local -c '
+          import importlib
+          from packaging.version import Version
+
+          fails = []
+          def check(label, fn):
+              try:
+                  fn()
+                  print("PASS ", label)
+              except Exception as e:
+                  print("FAIL ", label, type(e).__name__, e)
+                  fails.append(label)
+
+          for mod, floor in [("cryptography", "50.0.0"),
+                             ("google.protobuf", "5.29.6"),
+                             ("lxml.etree", "6.1.0")]:
+              def f(mod=mod, floor=floor):
+                  got = importlib.import_module(mod).__version__
+                  assert Version(got) >= Version(floor), f"{got} < {floor}"
+                  print("      ", mod, got)
+              check(f"{mod} >= {floor}", f)
+
+          def rsa_sign():
+              from cryptography.hazmat.primitives import serialization
+              from cryptography.hazmat.primitives.asymmetric import rsa
+              from google.auth import crypt
+              pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+                  serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                  serialization.NoEncryption())
+              assert crypt.RSASigner.from_string(pem).sign(b"payload")
+          check("google.auth RSA signing (cryptography)", rsa_sign)
+
+          # Generated _pb2 descriptors are what a protobuf major bump breaks.
+          check("googleapis-common-protos descriptors", lambda: importlib.import_module(
+              "google.rpc.status_pb2").Status(code=3, message="x").SerializeToString())
+          check("google.api_core protobuf helpers",
+                lambda: importlib.import_module("google.api_core.protobuf_helpers"))
+
+          # lxml has no direct importer in dispatch; these are its real consumers.
+          check("emails renders html", lambda: importlib.import_module("emails").Message(
+              html="<h1>hi</h1>", subject="s", mail_from="a@b.c").as_message().as_string())
+          check("bs4 lxml parser", lambda: importlib.import_module("bs4").BeautifulSoup(
+              "<p>x</p>", "lxml").get_text())
+          check("pandas read_html via lxml", lambda: importlib.import_module("pandas").read_html(
+              __import__("io").StringIO("<table><tr><th>a</th></tr><tr><td>1</td></tr></table>"),
+              flavor="lxml"))
+
+          for m in ["config", "common", "calendar.plugin", "groups.plugin",
+                    "drive.plugin", "docs.plugin", "gmail.plugin"]:
+              check(f"dispatch_google.{m}", lambda m=m: importlib.import_module(
+                  f"dispatch.plugins.dispatch_google.{m}"))
+
+          raise SystemExit(f"{len(fails)} failed: {fails}" if fails else 0)
+          '
+
+      - name: Install trivy
+        run: |
+          set -euo pipefail
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" | sha256sum -c
+          tar xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
+          sudo install trivy /usr/local/bin/trivy
+
+      # --ignore-unfixed keeps findings with no available fix out of the gate --
+      # currently four Perl CVEs with no Debian trixie fix. Dropping it is a
+      # separate decision from the severity threshold.
+      #
+      # Nothing holds the image at zero findings between rebuilds: 51 of the
+      # application's dependencies are unpinned with no lockfile, so this
+      # job can go red without either repository changing. Fix the dependency,
+      # or raise the pin -- do not narrow this back to CRITICAL.
+      - name: Scan for known vulnerabilities
+        run: trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 dispatch-local
+
+      # Generated from the built image rather than from pyproject.toml: with 51
+      # dependencies unspecified and no lockfile, only the image records what
+      # actually resolved. Uses the trivy already downloaded and hash-verified
+      # above rather than adding a second tool to the supply chain.
+      - name: Generate a CycloneDX SBOM of the image
+        run: |
+          set -euo pipefail
+          trivy image --format cyclonedx --output dispatch-local.cdx.json dispatch-local
+          python3 - <<'EOF'
+          import json
+          d = json.load(open('dispatch-local.cdx.json'))
+          n = len(d.get('components', []))
+          print(f'components: {n}')
+          assert n > 100, f'implausibly small SBOM: {n} components'
+          EOF
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-cyclonedx
+          path: dispatch-local.cdx.json
+          retention-days: 90
