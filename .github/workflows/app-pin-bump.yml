@@ -1,0 +1,143 @@
+name: App pin bump
+
+# Opens a PR moving the application build context to the newest Jamyn/dispatch
+# release, and rolls the pin it replaces into the upgrade scenario so that test
+# always upgrades from the version operators are actually running.
+#
+# Pull-based deliberately. A push from the application repo would need a token
+# with write access to this repository stored in that one, so compromising it
+# would reach this repo; reading a public repository's releases needs no
+# credential at all. The daily schedule plus workflow_dispatch is the trade:
+# slightly less immediate than a release webhook, no cross-repository secret.
+#
+# This proposes, it never merges. The PR still has to pass image-checks and be
+# reviewed. Note the PR is opened with GITHUB_TOKEN, and GitHub deliberately
+# does not trigger workflows from such PRs to avoid recursion -- hence the
+# explicit image-checks dispatch at the end.
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  # Needed only to dispatch image-checks against the new branch.
+  actions: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      # Credentials are kept here, unlike this repo's other workflows: pushing
+      # the bump branch is the whole point of the job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the newest application release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api repos/Jamyn/dispatch/releases/latest --jq .tag_name)
+          # Constrain the tag before it reaches a branch name or commit message.
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "unexpected release tag: $tag"; exit 1 ;;
+          esac
+          # Resolves annotated and lightweight tags alike, unlike git/ref/tags.
+          sha=$(gh api "repos/Jamyn/dispatch/commits/$tag" --jq .sha)
+          [ ${#sha} -eq 40 ] || { echo "unexpected sha: $sha"; exit 1; }
+          current=$(grep -oP 'dispatch\.git#\K[0-9a-f]{40}' docker-compose.yml)
+          if [ "$sha" = "$current" ]; then
+            changed=false
+            echo "Already pinned to $tag ($sha)."
+          else
+            changed=true
+            echo "Bumping $current -> $sha ($tag)."
+          fi
+          {
+            echo "tag=$tag"
+            echo "sha=$sha"
+            echo "current=$current"
+            echo "changed=$changed"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite the pin and its references
+        if: steps.release.outputs.changed == 'true'
+        env:
+          NEW_SHA: ${{ steps.release.outputs.sha }}
+          OLD_SHA: ${{ steps.release.outputs.current }}
+          NEW_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, pathlib
+          new, old, tag = os.environ["NEW_SHA"], os.environ["OLD_SHA"], os.environ["NEW_TAG"]
+
+          compose = pathlib.Path("docker-compose.yml")
+          t = compose.read_text()
+          assert old in t, "pin not found in docker-compose.yml"
+          t = t.replace(old, new)
+          t = t.replace(f"{old[:8]} is our fork's", f"{new[:8]} is our fork's")
+          t = re.sub(r"\(release v[0-9.]+\)", f"(release {tag})", t)
+          compose.write_text(t)
+
+          readme = pathlib.Path("README.md")
+          r = readme.read_text()
+          r = re.sub(
+              r"\[`v[0-9.]+`\]\(https://github\.com/Jamyn/dispatch/releases/tag/v[0-9.]+\)",
+              f"[`{tag}`](https://github.com/Jamyn/dispatch/releases/tag/{tag})",
+              r,
+          )
+          readme.write_text(r)
+
+          # The upgrade scenario seeds from the pin being replaced, so the test
+          # keeps covering the jump operators will actually perform.
+          # Scoped to the build-context URL on purpose: a bare 40-hex search
+          # also matches this file's action SHA pins.
+          wf = pathlib.Path(".github/workflows/postgres-install.yml")
+          w = wf.read_text()
+          prev = set(re.findall(r"dispatch\.git\\?#([0-9a-f]{40})", w))
+          assert len(prev) == 1, f"expected one old pin, found {prev}"
+          w = w.replace(prev.pop(), old)
+          wf.write_text(w)
+          PY
+          git diff --stat
+
+      - name: Open the pull request
+        if: steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ steps.release.outputs.tag }}
+          NEW_SHA: ${{ steps.release.outputs.sha }}
+          OLD_SHA: ${{ steps.release.outputs.current }}
+        run: |
+          set -euo pipefail
+          branch="maintenance/app-pin-${NEW_TAG}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -aqm "build: move the application pin to ${NEW_TAG}"
+          git push -q origin "$branch"
+          cat > /tmp/pr-body.md <<BODY
+          Moves the build context to [\`${NEW_TAG}\`](https://github.com/Jamyn/dispatch/releases/tag/${NEW_TAG}) (\`${NEW_SHA}\`), replacing \`${OLD_SHA}\`, which becomes the upgrade scenario's starting version.
+
+          Opened automatically. Merge with **squash** so the resulting commit carries GitHub's signature -- the branch commit is unsigned and \`master\` requires signed commits.
+
+          Image checks were dispatched against this branch; confirm they passed, and run the Postgres suite as well if this jump crosses application migrations.
+          BODY
+          sed -i 's/^          //' /tmp/pr-body.md
+          gh pr create --base master --head "$branch" \
+            --title "build: move the application pin to ${NEW_TAG}" \
+            --label maintenance --label docker --label upstream \
+            --body-file /tmp/pr-body.md
+          gh workflow run image-checks.yml --ref "$branch"

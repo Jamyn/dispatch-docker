@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  # Actions rot silently: this repository shipped actions/stale@v3 long after its
+  # node12 runner stopped being supported, because nothing was watching.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # `maintenance` is a primary label, so these PRs satisfy enforce-labels.yml
+    # without anyone having to touch them; `github-actions` is the topic.
+    #
+    # Both names must exist as repository labels. Setting `labels` explicitly
+    # opts out of Dependabot creating its own default `dependencies` label, and
+    # a label that does not exist is silently ignored -- so renaming or deleting
+    # either one leaves every Dependabot PR unlabelled and blocked by the gate
+    # this key exists to satisfy.
+    labels:
+      - "maintenance"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Same gate reasoning as above; `docker` is the topic for image bumps.
+    labels:
+      - "maintenance"
+      - "docker"
+    commit-message:
+      prefix: "build"
+    ignore:
+      # A Postgres major is a dump/restore migration with real downtime, not a
+      # version bump -- see the upgrade procedure in README.md. Patch and minor
+      # updates to the pinned image are still proposed.
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
