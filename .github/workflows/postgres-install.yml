@@ -340,13 +340,30 @@ jobs:
       # The pin lives in a data file, not inline here: app-pin-bump rolls it on
       # every bump, and GITHUB_TOKEN cannot push a change to a workflow file --
       # there is no `workflows` permission scope to grant it.
+      # Requiring it to be a *released* commit is what makes the data file safe
+      # to let GITHUB_TOKEN write: a pin quietly moved to an unreviewed side
+      # branch fails here rather than getting built and run.
       - name: Point the build context at the previous application pin
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           prev=$(tr -d '[:space:]' < .github/upgrade-from-pin)
           printf '%s' "$prev" | grep -qE '^[0-9a-f]{40}$' || {
             echo "bad previous pin: $prev"; exit 1
           }
+          gh api --paginate repos/Jamyn/dispatch/releases --jq '.[].tag_name' > release-tags.txt
+          [ -s release-tags.txt ] || { echo "no application releases found"; exit 1; }
+          git ls-remote --tags https://github.com/Jamyn/dispatch.git > release-refs.txt
+          while read -r tag; do
+            awk -v t="refs/tags/$tag" '$2==t{l=$1} $2==t"^{}"{c=$1} END{if(c||l) print (c?c:l)}' release-refs.txt
+          done < release-tags.txt > released-shas.txt
+          grep -qx "$prev" released-shas.txt || {
+            echo "previous pin $prev is not a released commit of Jamyn/dispatch"
+            echo "released commits were:"; cat released-shas.txt
+            exit 1
+          }
+          rm -f release-tags.txt release-refs.txt released-shas.txt
           sed -i "s#context: https://github.com/Jamyn/dispatch.git\#[0-9a-f]*#context: https://github.com/Jamyn/dispatch.git\#${prev}#" docker-compose.yml
           grep -n "$prev" docker-compose.yml
 
