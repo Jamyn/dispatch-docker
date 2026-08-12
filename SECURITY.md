@@ -2,9 +2,9 @@
 
 ## Scope
 
-This repository is a Docker/Compose bootstrap for [Netflix Dispatch](https://github.com/Netflix/dispatch) — roughly 700 lines of shell, Compose, and CI config with no application code of its own. Reports in scope here are about *this* repo: `install.sh` (including secret generation and Postgres credential handling), `docker-compose.yml`, and the GitHub Actions workflows under `.github/workflows/`.
+This repository is a Docker/Compose bootstrap for [Netflix Dispatch](https://github.com/Netflix/dispatch) — roughly 1,500 lines of shell, Compose, and CI config with no application code of its own. Reports in scope here are about *this* repo: `install.sh` (including secret generation and Postgres credential handling), `docker-compose.yml`, and the GitHub Actions workflows under `.github/workflows/`.
 
-Vulnerabilities in the Dispatch application itself belong in [Jamyn/dispatch](https://github.com/Jamyn/dispatch), the actively maintained fork this repo's build context is pinned to — report them privately at [github.com/Jamyn/dispatch/security/advisories/new](https://github.com/Jamyn/dispatch/security/advisories/new). The Netflix upstream was archived (read-only) on 2025-09-01 and has no security response path; the fork's `main` and its latest release are what get fixed.
+Vulnerabilities in the Dispatch application itself belong in [Jamyn/dispatch](https://github.com/Jamyn/dispatch), the actively maintained continuation this repo's build context is pinned to — report them privately at [github.com/Jamyn/dispatch/security/advisories/new](https://github.com/Jamyn/dispatch/security/advisories/new). The Netflix upstream was archived (read-only) on 2025-09-01 and has no security response path; that repo's `main` and its latest release are what get fixed.
 
 ## Reporting a vulnerability
 

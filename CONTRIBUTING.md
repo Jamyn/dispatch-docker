@@ -7,7 +7,7 @@ are welcome; response time is not guaranteed.
 ## Before you start
 
 - **This repo has no application code.** It's Compose, `install.sh`, and
-  deployment CI — roughly 700 lines of shell/Compose/config. Changing what
+  deployment CI — roughly 1,500 lines of shell/Compose/config. Changing what
   Dispatch itself does belongs in
   [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch) instead; this repo
   only builds it at a pinned commit.

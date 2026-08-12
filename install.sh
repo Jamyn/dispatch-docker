@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-COMPOSE_DOCKER_CLI_BUILD=0
-
 MIN_DOCKER_VERSION='25.0.0'
 MIN_COMPOSE_VERSION='2.0.0'
 MIN_RAM=2400 # MB
@@ -16,8 +14,6 @@ DISPATCH_EXTRA_REQUIREMENTS='./requirements.txt'
 # before the password became a placeholder is still treated as uninitialised.
 PLACEHOLDER_SECRET='REPLACEWITHSOMETHIINGSECRET'
 DEFAULT_DB_PASSWORD='dispatch'
-
-COMPOSE_BUILD_ARGS="$(grep -E '^(VITE)' ${DISPATCH_CONFIG_ENV} | while read var ; do printf %b "--build-arg ${var} "; done)"
 
 DISPATCH_DB_SAMPLE_DATA_FILE='dispatch-sample-data.dump'
 DISPATCH_DB_SAMPLE_DATA_URL="https://raw.githubusercontent.com/Jamyn/dispatch/main/data/${DISPATCH_DB_SAMPLE_DATA_FILE}"
@@ -91,6 +87,10 @@ echo ""
 ensure_file_from_example $DISPATCH_CONFIG_ENV
 ensure_file_from_example $DISPATCH_EXTRA_REQUIREMENTS
 source $DISPATCH_CONFIG_ENV
+
+# Must run after the .env exists (created above) -- grep against a missing
+# file silently resolves this to empty rather than erroring.
+COMPOSE_BUILD_ARGS="$(grep -E '^(VITE)' ${DISPATCH_CONFIG_ENV} | while read var ; do printf %b "--build-arg ${var} "; done)"
 
 # Clean up old stuff and ensure nothing is working while we install/update
 docker compose down --rmi local --remove-orphans
