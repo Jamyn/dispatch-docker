@@ -3,7 +3,7 @@
 [![Postgres install](https://github.com/Jamyn/dispatch-docker/actions/workflows/postgres-install.yml/badge.svg)](https://github.com/Jamyn/dispatch-docker/actions/workflows/postgres-install.yml)
 [![License](https://img.shields.io/github/license/Jamyn/dispatch-docker)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Jamyn/dispatch-docker)](https://github.com/Jamyn/dispatch-docker/releases)
-[![Last commit](https://img.shields.io/github/last-commit/Jamyn/dispatch-docker)](https://github.com/Jamyn/dispatch-docker/commits/master)
+[![Last commit](https://img.shields.io/github/last-commit/Jamyn/dispatch-docker)](https://github.com/Jamyn/dispatch-docker/commits/main)
 
 Docker Compose bootstrap for running [Dispatch](https://github.com/Jamyn/dispatch), Netflix's incident and signal management platform. This repository contains no application code. It's the shell, Compose, and configuration needed to build and run Dispatch, nothing more. To change how Dispatch itself behaves, see the main project; to change how it's built, configured, or deployed, you're in the right place.
 
@@ -212,7 +212,7 @@ This procedure was validated end-to-end (fresh install â†’ representative data â
 
 Pull requests are welcome.
 
-Every PR needs at least one **primary** label, saying what kind of change it is. CI enforces this:
+Every PR needs at least one **primary** label, saying what kind of change it is. `enforce-labels` checks this on every PR:
 
 | label | use it for |
 | --- | --- |
