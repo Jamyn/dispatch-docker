@@ -38,7 +38,7 @@ Once the stack is running, register the first user:
 http://localhost:8000/default/auth/register
 ```
 
-Then grant that user ownership (`default` is the organization name unless you loaded sample data under a different one):
+Then grant that user ownership (`default` is the organization name — both the sample-data load and a plain `database init` hardcode it, so it won't be anything else):
 
 ```bash
 docker exec -it dispatch-web-1 bash -c \
