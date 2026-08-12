@@ -13,7 +13,7 @@ Docker Compose bootstrap for running [Dispatch](https://github.com/Jamyn/dispatc
 
 This repository is a standalone continuation of `Netflix/dispatch-docker`, maintained independently of Netflix. It may diverge from upstream, including with breaking changes, to fix security issues, update outdated components, and adapt the deployment to our own use of the product. Don't expect drop-in compatibility with the archived upstream project going forward.
 
-The application itself is built from [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch), a standalone continuation of Netflix's archived app repo, pinned to a fixed commit in `docker-compose.yml`. As of the `main` migration, that pin is our `main` (release [`v26.08.12`](https://github.com/Jamyn/dispatch/releases/tag/v26.08.12)), upstream's final state before archival, 457 commits past the old `latest`-based pin, plus fixes for the packaging breakage that commit jump introduced and the same base-OS/Postgres-client/mjml rework the old pin carried.
+The application itself is built from [`Jamyn/dispatch`](https://github.com/Jamyn/dispatch), a standalone continuation of Netflix's archived app repo, pinned to a fixed commit in `docker-compose.yml`. As of the `main` migration, that pin is our `main` (release [`v26.08.12.1`](https://github.com/Jamyn/dispatch/releases/tag/v26.08.12.1)), upstream's final state before archival, 457 commits past the old `latest`-based pin, plus fixes for the packaging breakage that commit jump introduced and the same base-OS/Postgres-client/mjml rework the old pin carried.
 
 ## Requirements
 
