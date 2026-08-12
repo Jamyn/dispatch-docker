@@ -65,8 +65,9 @@ fix: force TCP for the postgres readiness probe
   functional coverage) only runs on `workflow_dispatch` and version tags, so
   test install/upgrade paths locally before relying on CI to catch a
   regression.
-- No approvals are required to merge, but all required checks must pass and
-  all commits must be signed.
+- No approvals are required to merge; commits must be signed (GitHub-enforced
+  via the branch ruleset). CI runs `enforce-labels`, `actionlint`,
+  `shellcheck`, and `image-checks` on every PR.
 
 ## Reporting issues
 

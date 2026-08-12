@@ -12,4 +12,4 @@ Report privately via GitHub: **[github.com/Jamyn/dispatch-docker/security/adviso
 
 ## Supported versions
 
-Bug and security reports are accepted against the **latest tagged release** (`v*`, see [Releases](https://github.com/Jamyn/dispatch-docker/releases)) and the current `master` tip only — the same applies to `main` in [Jamyn/dispatch](https://github.com/Jamyn/dispatch). Older releases receive no fixes; upgrade to the latest release before reporting. Fixes land on `master` and ship in the next release.
+Bug and security reports are accepted against the **latest tagged release** (`v*`, see [Releases](https://github.com/Jamyn/dispatch-docker/releases)) and the current `main` tip only — the same applies to `main` in [Jamyn/dispatch](https://github.com/Jamyn/dispatch). Older releases receive no fixes; upgrade to the latest release before reporting. Fixes land on `main` and ship in the next release.
