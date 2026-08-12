@@ -119,15 +119,34 @@ jobs:
             echo "Branch $branch already exists; nothing to do."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          git commit -aqm "build: move the application pin to ${NEW_TAG}"
-          git push -q origin "$branch"
+          # A `git commit` on the runner is unsigned -- the runner holds no key
+          # -- and `main` enforces required_signatures, which squash-merging
+          # does NOT bypass: GitHub refuses before it ever squashes. Commits
+          # created through the API are signed by GitHub, so push the branch
+          # unchanged and add the edits with createCommitOnBranch, which also
+          # keeps all files in one atomic commit.
+          head_oid="$(git rev-parse HEAD)"
+          git push -q origin "HEAD:refs/heads/$branch"
+          additions="$(git diff --name-only | while read -r f; do
+            jq -n --arg p "$f" --arg c "$(base64 -w0 "$f")" '{path:$p, contents:$c}'
+          done | jq -sc .)"
+          jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg branch "$branch" \
+            --arg oid "$head_oid" \
+            --arg msg "build: move the application pin to ${NEW_TAG}" \
+            --argjson additions "$additions" \
+            '{query:"mutation($input:CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{oid}}}",
+              variables:{input:{
+                branch:{repositoryNameWithOwner:$repo,branchName:$branch},
+                message:{headline:$msg},
+                expectedHeadOid:$oid,
+                fileChanges:{additions:$additions}}}}' \
+            | gh api graphql --input - >/dev/null
           cat > /tmp/pr-body.md <<BODY
           Moves the build context to [\`${NEW_TAG}\`](https://github.com/Jamyn/dispatch/releases/tag/${NEW_TAG}) (\`${NEW_SHA}\`), replacing \`${OLD_SHA}\`, which becomes the upgrade scenario's starting version.
 
-          Opened automatically. Merge with **squash** so the resulting commit carries GitHub's signature -- the branch commit is unsigned and \`main\` requires signed commits.
+          Opened automatically. The commit is created through GitHub's API, so it is signed by GitHub and satisfies \`main\`'s signed-commits rule.
 
           Image checks were dispatched against this branch; confirm they passed, and run the Postgres suite as well if this jump crosses application migrations.
           BODY
