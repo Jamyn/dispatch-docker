@@ -94,7 +94,7 @@ For local development against your own Dispatch checkout, point the `context:` u
 
 ## Sample data
 
-By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/latest/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored in our repository) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
+By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/main/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored in our repository) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
 
 ## Accessing Postgres from the host
 
@@ -206,7 +206,7 @@ This procedure was validated end-to-end (fresh install → representative data �
 - Publishing Postgres's port with a bare `5432:5432` exposes it on every network the host is on, and Docker's rules sit ahead of the host firewall. See [Accessing Postgres from the host](#accessing-postgres-from-the-host).
 - Dispatch itself serves plain HTTP; put it behind TLS before exposing it beyond your local network.
 
-**Reporting a vulnerability:** this is a single-maintainer project with no formal disclosure process or SLA. Open a GitHub issue for anything already public; for something you'd rather not disclose before a fix ships, contact [@Jamyn](https://github.com/Jamyn) directly.
+**Reporting a vulnerability:** see [SECURITY.md](SECURITY.md) — report privately via GitHub Security Advisories, not a public issue.
 
 ## Contributing
 

@@ -20,7 +20,7 @@ DEFAULT_DB_PASSWORD='dispatch'
 COMPOSE_BUILD_ARGS="$(grep -E '^(VITE)' ${DISPATCH_CONFIG_ENV} | while read var ; do printf %b "--build-arg ${var} "; done)"
 
 DISPATCH_DB_SAMPLE_DATA_FILE='dispatch-sample-data.dump'
-DISPATCH_DB_SAMPLE_DATA_URL="https://raw.githubusercontent.com/Jamyn/dispatch/latest/data/${DISPATCH_DB_SAMPLE_DATA_FILE}"
+DISPATCH_DB_SAMPLE_DATA_URL="https://raw.githubusercontent.com/Jamyn/dispatch/main/data/${DISPATCH_DB_SAMPLE_DATA_FILE}"
 
 DID_CLEAN_UP=0
 # the cleanup function will be the exit point
