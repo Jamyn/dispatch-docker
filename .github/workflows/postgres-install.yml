@@ -434,6 +434,62 @@ jobs:
             > post-incident.json
           python3 -c "import json; d=json.load(open('post-incident.json')); assert d['title']=='post-app-upgrade incident', d"
 
+      # ---------------------------------------------------------------
+      # Scenario 4: fresh install that loads the sample data
+      #
+      # This path was unreachable from CI until install.sh grew
+      # DISPATCH_LOAD_SAMPLE_DATA, because the load was gated on the
+      # interactive prompt and every runner sets CI=true. A sample dump whose
+      # schema the migration chain could not repair therefore shipped
+      # undetected for years (Jamyn/dispatch#90).
+      #
+      # install.sh fetches the dump from dispatch's main branch, not from the
+      # commit this repo pins. That is deliberate: it makes this scenario a
+      # live check on the fixture itself, which is the thing that broke. Do not
+      # "fix" it into a pinned fetch.
+      # ---------------------------------------------------------------
+
+      - name: Tear down scenario 3
+        run: |
+          set -euo pipefail
+          docker compose down --remove-orphans
+          docker volume rm -f dispatch-postgres
+          rm -f login.json incident.json post-incident.json
+          cp .env.example .env
+
+      - name: Install with sample data
+        env:
+          DISPATCH_LOAD_SAMPLE_DATA: "1"
+        run: |
+          set -euo pipefail
+          ./install.sh | tee sample.log
+          grep -q 'Example data loaded' sample.log
+          docker compose up -d
+          for _ in $(seq 1 45); do
+            curl -sf -o /dev/null http://localhost:8000/ && break
+            sleep 2
+          done
+
+      # The sample rows have to be present, and every table the dump carries
+      # has to be queryable through the ORM. case_cost_types is the endpoint
+      # that 500s when the dump's schema is older than its alembic stamp:
+      # the restore and the upgrade both report success regardless.
+      - name: Verify the sample data is present and the API can read it
+        run: |
+          set -euo pipefail
+          docker compose exec -T postgres psql -U dispatch -d dispatch -tAc \
+            "select count(*) from dispatch_organization_default.incident_type where name = 'Denial of Service'" \
+            | grep -qx 1
+          curl -sf -X POST http://localhost:8000/api/v1/default/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"sample@example.com","password":"SuperSecret123!"}' > register.json
+          TOKEN=$(python3 -c "import json;print(json.load(open('register.json'))['token'])")
+          for endpoint in case_cost_types incidents incident_types projects tags; do
+            echo "GET /api/v1/default/$endpoint"
+            curl -sf -H "Authorization: Bearer $TOKEN" \
+              "http://localhost:8000/api/v1/default/$endpoint" > /dev/null
+          done
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs
