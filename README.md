@@ -30,7 +30,7 @@ cd dispatch-docker
 docker compose up -d
 ```
 
-`install.sh` creates `.env` and `requirements.txt` from their `.example` files if they don't already exist, checks the requirements above, generates secrets, builds the image, and initializes the database. It prompts to load sample data unless `CI` is set in the environment.
+`install.sh` creates `.env` and `requirements.txt` from their `.example` files if they don't already exist, checks the requirements above, generates secrets, builds the image, and initializes the database. It prompts to load sample data unless `CI` is set in the environment, or `DISPATCH_LOAD_SAMPLE_DATA=1` answers that prompt ahead of time.
 
 Once the stack is running, register the first user:
 
@@ -94,7 +94,7 @@ For local development against your own Dispatch checkout, point the `context:` u
 
 ## Sample data
 
-By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/main/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored in our repository) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. This prompt is skipped when `CI` is set.
+By default Dispatch starts with an empty database. `install.sh` offers to load the [sample data dump](https://github.com/Jamyn/dispatch/blob/main/data/dispatch-sample-data.dump) (originally published by Netflix, mirrored in our repository) instead: say `y` at the prompt during install. **This drops and recreates the `dispatch` database first**, so only say yes on a fresh install. It loads under the `default` organization. The prompt is skipped when `CI` is set; set `DISPATCH_LOAD_SAMPLE_DATA=1` to load the sample data without being asked, which is how a non-interactive install opts in.
 
 ## Accessing Postgres from the host
 

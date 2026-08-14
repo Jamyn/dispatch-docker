@@ -215,9 +215,21 @@ echo "Postgres is accepting connections."
 
 echo ""
 echo "Setting up database..."
-if [ ! $CI ]; then
+# Loading sample data is gated on the answer, not on being interactive. The
+# prompt is what cannot run under CI, and gating the load on `[ ! $CI ]` meant
+# every runner sets CI=true and no automation ever exercised this path -- which
+# is how a sample dump inconsistent with the migration chain survived for years
+# (Jamyn/dispatch#90). DISPATCH_LOAD_SAMPLE_DATA=1 answers the prompt ahead of
+# time so postgres-install can cover it.
+LOAD_SAMPLE_DATA="${DISPATCH_LOAD_SAMPLE_DATA:-}"
+if [ -z "$LOAD_SAMPLE_DATA" ] && [ ! $CI ]; then
   read -p "Do you want to load example data (WARNING: this will remove all existing database data) (y/N)?" CONT
   if [ "$CONT" = "y" ]; then
+    LOAD_SAMPLE_DATA=1
+  fi
+fi
+
+if [ -n "$LOAD_SAMPLE_DATA" ] && [ "$LOAD_SAMPLE_DATA" != "0" ]; then
     echo "Downloading example data from Dispatch repository..."
     # -f, or a 404 body is written to the dump file and loaded as if it were data.
     curl -f -# -o "./$DISPATCH_DB_SAMPLE_DATA_FILE" "$DISPATCH_DB_SAMPLE_DATA_URL"
@@ -229,12 +241,11 @@ if [ ! $CI ]; then
     # ON_ERROR_STOP, or psql exits 0 after failing every statement.
     docker compose run -e "PGPASSWORD=$POSTGRES_PASSWORD" -v "$(pwd)/$DISPATCH_DB_SAMPLE_DATA_FILE:/$DISPATCH_DB_SAMPLE_DATA_FILE:Z" --rm postgres psql -v ON_ERROR_STOP=1 -h $DATABASE_HOSTNAME -p $DATABASE_PORT -U $POSTGRES_USER -d $DATABASE_NAME -f "/$DISPATCH_DB_SAMPLE_DATA_FILE"
     echo "Example data loaded. Navigate to /default/auth/register and create a new user."
-  fi
 fi
 
 # Initialise the schema when, and only when, it is actually missing.
 #
-# This deliberately sits outside the `[ ! $CI ]` block above. `database upgrade`
+# This deliberately sits outside the sample-data block above. `database upgrade`
 # below is an alembic migration run, not a schema creator: against a virgin
 # database its migrations fail on the first table they try to alter
 # ("relation dispatch_user_organization does not exist"). Because CI runners set
