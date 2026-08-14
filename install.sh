@@ -234,7 +234,7 @@ fi
 
 # Initialise the schema when, and only when, it is actually missing.
 #
-# This deliberately sits outside the `[ ! $CI ]` block above. `database upgrade`
+# This deliberately sits outside the sample-data block above. `database upgrade`
 # below is an alembic migration run, not a schema creator: against a virgin
 # database its migrations fail on the first table they try to alter
 # ("relation dispatch_user_organization does not exist"). Because CI runners set
