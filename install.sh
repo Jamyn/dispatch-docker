@@ -16,7 +16,18 @@ PLACEHOLDER_SECRET='REPLACEWITHSOMETHIINGSECRET'
 DEFAULT_DB_PASSWORD='dispatch'
 
 DISPATCH_DB_SAMPLE_DATA_FILE='dispatch-sample-data.dump'
-DISPATCH_DB_SAMPLE_DATA_URL="https://raw.githubusercontent.com/Jamyn/dispatch/main/data/${DISPATCH_DB_SAMPLE_DATA_FILE}"
+
+# Read the ref from the build context rather than tracking `main`. The dump
+# carries an alembic stamp, so a fixture newer than the pinned image is stamped
+# at revisions that image does not ship and `database upgrade` aborts with
+# "Can't locate revision". Scoped to the dispatch.git# URL -- a bare 40-hex
+# match would also find this repo's own action pins.
+DISPATCH_PINNED_REF="$(sed -n 's|.*dispatch\.git#\([0-9a-f]\{40\}\).*|\1|p' docker-compose.yml | head -1)"
+if [ -z "$DISPATCH_PINNED_REF" ]; then
+    echo "FAIL: could not read the dispatch pin from docker-compose.yml."
+    exit 1
+fi
+DISPATCH_DB_SAMPLE_DATA_URL="https://raw.githubusercontent.com/Jamyn/dispatch/${DISPATCH_PINNED_REF}/data/${DISPATCH_DB_SAMPLE_DATA_FILE}"
 
 DID_CLEAN_UP=0
 # the cleanup function will be the exit point
