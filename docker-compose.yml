@@ -34,10 +34,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
-  core:
+  web:
+    <<: *restart_policy
     image: dispatch-local
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
+    # The only `build:` in this file, so the context is built once and both
+    # application services run the tag it produces. Do not move it back out to
+    # a build-only service: with no `command:` of its own, such a service
+    # inherits the image's default CMD and becomes a second, permanently
+    # network-reachable copy of the application (#9).
     build:
       # Pro-tip: point this to a relative directory containing the Dispatch
       # project root to pick up changes from your dev environment
@@ -122,27 +131,20 @@ services:
       # pattern -- upstream's own builds of `main` produce the same 0.1.0.
       # Not a regression introduced by this pin.
       context: https://github.com/Jamyn/dispatch.git#549cd8daef62c76a82fc998c526a615bfe6c09fc
-  web:
-    <<: *restart_policy
-    image: dispatch-local
-    depends_on:
-      postgres:
-        condition: service_healthy
-      core:
-        condition: service_started
-    env_file:
-      - .env
     command: ["server", "start", "dispatch.main:app", "--host=0.0.0.0"]
     ports:
       - "8000:8000"
   scheduler:
     <<: *restart_policy
     image: dispatch-local
+    # `dispatch-local` is built by `web`, never published. Compose resolves
+    # images for the whole project before creating any container, so the tag
+    # exists by the time this service is created; without this it first tries
+    # a registry pull and logs an access-denied error on every cold start.
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy
-      core:
-        condition: service_started
     env_file:
       - .env
     environment:

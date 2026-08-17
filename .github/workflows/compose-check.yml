@@ -1,0 +1,80 @@
+name: compose check
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - ".github/workflows/compose-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.yml"
+      - ".github/workflows/compose-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `docker compose config` interpolates .env, so it needs one to exist.
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Validate the Compose model
+        run: docker compose config --quiet
+
+      # Static half of the #9 regression test. The runtime half lives in
+      # postgres-install.yml, which only runs on tags; this runs on every PR
+      # that touches the Compose file and is what stops the shape of the bug
+      # from coming back.
+      - name: No service may silently inherit the image CMD
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, sys
+
+          cfg = json.loads(
+              subprocess.run(
+                  ["docker", "compose", "config", "--format", "json"],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+          )
+          services = cfg["services"]
+          errors = []
+
+          # The application image's Dockerfile sets CMD to the API server. Any
+          # service running that image without its own `command:` starts a
+          # second copy of the server -- which is exactly what the build-only
+          # `core` service did, unnoticed, for years (#9).
+          app = {n: s for n, s in services.items() if s.get("image") == "dispatch-local"}
+          if not app:
+              errors.append("no service uses the dispatch-local image; this check is looking at the wrong thing")
+          for name, svc in sorted(app.items()):
+              if not svc.get("command"):
+                  errors.append(f"service '{name}' runs dispatch-local with no explicit command:, so it inherits the image CMD and runs an unintended application server (#9)")
+
+          # One build for the shared tag. A second one re-resolves the same
+          # remote git context and roughly doubles a cold build.
+          builders = sorted(n for n, s in services.items() if s.get("build"))
+          if builders != ["web"]:
+              errors.append(f"expected exactly one build:, on 'web'; found {builders or 'none'}")
+
+          # Only web is meant to be reachable from outside the Compose network.
+          published = sorted(n for n, s in services.items() if s.get("ports"))
+          if published != ["web"]:
+              errors.append(f"expected only 'web' to publish host ports; found {published or 'none'}")
+
+          for e in errors:
+              print(f"FAIL: {e}", file=sys.stderr)
+          sys.exit(1 if errors else 0)
+          PY

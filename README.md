@@ -49,7 +49,7 @@ If you need non-default configuration (e.g. Google OAuth credentials), copy `.en
 
 ## Configuration
 
-All configuration lives in `.env` (gitignored, created from `.env.example`). Compose loads it via `env_file:` on every service, so anything added to the example propagates to `postgres`, `core`, `web`, and `scheduler` automatically.
+All configuration lives in `.env` (gitignored, created from `.env.example`). Compose loads it via `env_file:` on every service, so anything added to the example propagates to `postgres`, `web`, and `scheduler` automatically.
 
 | Variable | Purpose |
 | --- | --- |
@@ -84,13 +84,14 @@ Upgrading across the `main` repin runs 457 commits of accumulated `dispatch data
 | Service | Role |
 | --- | --- |
 | `postgres` | Database. Publishes no host port by default; reachable only by service name on the Compose network. |
-| `core` | Exists only to hold the `build:` block that produces the `dispatch-local` image `web` and `scheduler` both reference. |
-| `web` | The API and UI (`dispatch.main:app`), published on port `8000`. |
-| `scheduler` | Background jobs. Runs with `STATIC_DIR=` blank so it skips frontend assets. |
+| `web` | The API and UI (`dispatch.main:app`), published on port `8000`. Also carries the only `build:` block, which produces the `dispatch-local` image. |
+| `scheduler` | Background jobs. Runs with `STATIC_DIR=` blank so it skips frontend assets. Runs the `dispatch-local` image `web` builds; it never builds the context itself. |
 
-**`core` is not just a build placeholder. It runs.** With no `command:` override it inherits the image's default CMD, which is the same server `web` runs. A plain `docker compose up -d` leaves a second, permanently-running copy of the full application reachable at `http://core:8000/` inside the Compose network, with no restart policy. This is a known quirk of the current setup, not an intentional second instance you're expected to use.
+Both application services share one image and one build. Compose resolves images for the whole project before it creates any container, so `docker compose up -d` on a machine with no `dispatch-local` image builds it once, for `web`, and `scheduler` starts from that same tag. `docker compose up -d scheduler` on its own, before any build, is the one case that won't work — run `docker compose build` (or `install.sh`) first.
 
-For local development against your own Dispatch checkout, point the `context:` under `core` at a relative path to it (see the comment in `docker-compose.yml`) instead of the remote Git URL.
+For local development against your own Dispatch checkout, point the `context:` under `web` at a relative path to it (see the comment in `docker-compose.yml`) instead of the remote Git URL.
+
+If you are upgrading an installation from before this repo dropped its build-only `core` service, that container is now an orphan and Compose leaves it running with only a warning. `install.sh` clears it; if you start the stack by hand instead, use `docker compose up -d --remove-orphans` once.
 
 ## Sample data
 
@@ -137,7 +138,7 @@ This procedure was validated end-to-end (fresh install → representative data �
 
 1. **Back up first.** Stop the application tier but leave Postgres running, then dump the entire cluster using the *old* container's own client tools:
    ```bash
-   docker compose stop core web scheduler
+   docker compose stop web scheduler
    docker compose exec -T postgres pg_dumpall -U "$POSTGRES_USER" > dispatch-pg-upgrade.sql
    ```
    Verify the dump is non-trivial before proceeding (e.g. `grep -c '^CREATE TABLE' dispatch-pg-upgrade.sql`). Then stop Postgres too: `docker compose stop postgres`.
