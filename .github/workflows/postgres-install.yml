@@ -12,7 +12,7 @@ name: Postgres install
 # dispatch-local image, and that build is roughly 5 of the 6 minutes a run
 # takes. As separate jobs they landed on separate runners and each paid for a
 # cold build. Sharing a runner means the second and third install.sh runs hit
-# the local buildkit cache instead where nothing changed the `core` build
+# the local buildkit cache instead where nothing changed the application build
 # context (measured at ~3 seconds against ~5 minutes for scenario 2; scenario
 # 3 pays for exactly one more cold build, the old application pin's seed
 # install). The tradeoff is wall-clock, since the scenarios now run in
@@ -102,6 +102,27 @@ jobs:
           done
           curl -sf -o /dev/null http://localhost:8000/
 
+      # Runtime half of the #9 regression test (the static half is
+      # compose-check.yml). The build used to live on a `core` service with no
+      # `command:`, so it inherited the image CMD and left a second, permanently
+      # network-reachable application server behind every `up -d`. Counting from
+      # `docker inspect` rather than `compose ps --format {{.Command}}`, which
+      # truncates.
+      - name: Verify only one application server is running
+        run: |
+          set -euo pipefail
+          services=$(docker compose ps --services --status running | sort | paste -sd, -)
+          echo "running services: $services"
+          test "$services" = "postgres,scheduler,web"
+          servers=0
+          for c in $(docker compose ps -a --format '{{.Name}}'); do
+            cmd=$(docker inspect --format '{{join .Config.Entrypoint " "}} {{join .Config.Cmd " "}}' "$c")
+            echo "$c => $cmd"
+            case "$cmd" in *"server start"*) servers=$((servers + 1)) ;; esac
+          done
+          echo "containers running the API server: $servers"
+          test "$servers" -eq 1
+
       - name: Verify the Dispatch schema was created
         run: |
           set -euo pipefail
@@ -179,7 +200,7 @@ jobs:
           grep -n 'lib/postgresql/data' docker-compose.yml
 
       # The image build here is a cache hit: rewriting the postgres image and
-      # mount path above does not touch the `core` build context.
+      # mount path above does not touch the application build context.
       - name: Seed a real Dispatch install on the old Postgres version
         run: |
           set -euo pipefail
@@ -218,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           source .env
-          docker compose stop core web scheduler
+          docker compose stop web scheduler
           docker compose exec -T postgres pg_dumpall -U "$POSTGRES_USER" > dispatch-dump.sql
           grep -q "pre-upgrade incident" dispatch-dump.sql
           docker compose stop postgres

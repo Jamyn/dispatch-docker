@@ -1,0 +1,82 @@
+name: compose check
+
+on:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/compose-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.yml"
+      - ".env.example"
+      - ".github/workflows/compose-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `docker compose config` interpolates .env, so it needs one to exist.
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Validate the Compose model
+        run: docker compose config --quiet
+
+      # Static half of the #9 regression test. The runtime half lives in
+      # postgres-install.yml, which only runs on tags; this runs on every PR
+      # that touches the Compose file and is what stops the shape of the bug
+      # from coming back.
+      - name: No service may silently inherit the image CMD
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, subprocess, sys
+
+          cfg = json.loads(
+              subprocess.run(
+                  ["docker", "compose", "config", "--format", "json"],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+          )
+          services = cfg["services"]
+          errors = []
+
+          # Whatever this file builds locally, rather than a hardcoded tag, so
+          # renaming the image or the services cannot quietly opt out.
+          builders = sorted(n for n, s in services.items() if s.get("build"))
+          built = {s["image"] for s in services.values() if s.get("build") and s.get("image")}
+          if not built:
+              errors.append("no service builds a tagged image; this check is looking at the wrong thing")
+
+          # The application image's Dockerfile sets CMD to the API server, so a
+          # service running it without its own `command:` starts a second copy
+          # of the server. That is what the build-only `core` service did,
+          # unnoticed, for years (#9).
+          for name, svc in sorted(services.items()):
+              if svc.get("image") in built and not svc.get("command"):
+                  errors.append(f"service '{name}' runs the locally built image {svc['image']} with no explicit command:, so it inherits the image CMD and runs an unintended application server (#9)")
+
+          # One build for the shared tag. Two identical build blocks are cheap
+          # -- BuildKit deduplicates them -- but nothing keeps them identical,
+          # and once they drift both run and race to claim the same tag, with
+          # no warning from Compose about which one won.
+          if len(builders) != 1:
+              errors.append(f"expected exactly one build:; found {builders or 'none'}")
+
+          for e in errors:
+              print(f"FAIL: {e}", file=sys.stderr)
+          sys.exit(1 if errors else 0)
+          PY
