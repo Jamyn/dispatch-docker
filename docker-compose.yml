@@ -37,6 +37,11 @@ services:
   web:
     <<: *restart_policy
     image: dispatch-local
+    # `dispatch-local` is built here and never published, so there is nothing
+    # to pull. Without this on both services Compose still tries the registry
+    # first on a cold start and reports `pull access denied`, and a bare
+    # `docker compose pull` exits non-zero. Building is unaffected.
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,10 +142,9 @@ services:
   scheduler:
     <<: *restart_policy
     image: dispatch-local
-    # `dispatch-local` is built by `web`, never published. Compose resolves
-    # images for the whole project before creating any container, so the tag
-    # exists by the time this service is created; without this it first tries
-    # a registry pull and logs an access-denied error on every cold start.
+    # Built by `web`, not here -- see the note on its `pull_policy`. Compose
+    # resolves images for the whole project before it creates any container,
+    # so the tag exists by the time this service is created.
     pull_policy: never
     depends_on:
       postgres:

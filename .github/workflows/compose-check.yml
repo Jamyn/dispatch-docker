@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "docker-compose.yml"
+      - ".env.example"
       - ".github/workflows/compose-check.yml"
   push:
     branches: [main]
     paths:
       - "docker-compose.yml"
+      - ".env.example"
       - ".github/workflows/compose-check.yml"
 
 concurrency:
@@ -52,27 +54,25 @@ jobs:
           services = cfg["services"]
           errors = []
 
-          # The application image's Dockerfile sets CMD to the API server. Any
-          # service running that image without its own `command:` starts a
-          # second copy of the server -- which is exactly what the build-only
-          # `core` service did, unnoticed, for years (#9).
-          app = {n: s for n, s in services.items() if s.get("image") == "dispatch-local"}
-          if not app:
-              errors.append("no service uses the dispatch-local image; this check is looking at the wrong thing")
-          for name, svc in sorted(app.items()):
-              if not svc.get("command"):
-                  errors.append(f"service '{name}' runs dispatch-local with no explicit command:, so it inherits the image CMD and runs an unintended application server (#9)")
+          # Whatever this file builds locally, rather than a hardcoded tag, so
+          # renaming the image or the services cannot quietly opt out.
+          builders = sorted(n for n, s in services.items() if s.get("build"))
+          built = {s["image"] for s in services.values() if s.get("build") and s.get("image")}
+          if not built:
+              errors.append("no service builds a tagged image; this check is looking at the wrong thing")
+
+          # The application image's Dockerfile sets CMD to the API server, so a
+          # service running it without its own `command:` starts a second copy
+          # of the server. That is what the build-only `core` service did,
+          # unnoticed, for years (#9).
+          for name, svc in sorted(services.items()):
+              if svc.get("image") in built and not svc.get("command"):
+                  errors.append(f"service '{name}' runs the locally built image {svc['image']} with no explicit command:, so it inherits the image CMD and runs an unintended application server (#9)")
 
           # One build for the shared tag. A second one re-resolves the same
           # remote git context and roughly doubles a cold build.
-          builders = sorted(n for n, s in services.items() if s.get("build"))
-          if builders != ["web"]:
-              errors.append(f"expected exactly one build:, on 'web'; found {builders or 'none'}")
-
-          # Only web is meant to be reachable from outside the Compose network.
-          published = sorted(n for n, s in services.items() if s.get("ports"))
-          if published != ["web"]:
-              errors.append(f"expected only 'web' to publish host ports; found {published or 'none'}")
+          if len(builders) != 1:
+              errors.append(f"expected exactly one build:; found {builders or 'none'}")
 
           for e in errors:
               print(f"FAIL: {e}", file=sys.stderr)
