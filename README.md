@@ -91,7 +91,7 @@ Both application services share one image and one build. Compose resolves images
 
 For local development against your own Dispatch checkout, point the `context:` under `web` at a relative path to it (see the comment in `docker-compose.yml`) instead of the remote Git URL.
 
-If you are upgrading an installation from before this repo dropped its build-only `core` service, that container is now an orphan and Compose leaves it running with only a warning. `install.sh` clears it; if you start the stack by hand instead, use `docker compose up -d --remove-orphans` once. That first upgrade also recreates the `web` and `scheduler` containers, so expect a short interruption.
+If you are upgrading an installation from before this repo dropped its build-only `core` service, **that container is still running a second copy of the API until you remove it** — Compose only warns about it, because it is now an orphan. `install.sh` clears it; if you start the stack by hand instead, run `docker compose up -d --remove-orphans` once. That first upgrade also recreates the `web` and `scheduler` containers, so expect a short interruption.
 
 ## Sample data
 
