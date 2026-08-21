@@ -1,17 +1,12 @@
 name: compose check
 
+# No `paths:` filter: this is a required status check, and a path-filtered
+# required check never reports on a PR outside its filter, leaving that PR
+# permanently blocked waiting for a run that never starts.
 on:
   pull_request:
-    paths:
-      - "docker-compose.yml"
-      - ".env.example"
-      - ".github/workflows/compose-check.yml"
   push:
     branches: [main]
-    paths:
-      - "docker-compose.yml"
-      - ".env.example"
-      - ".github/workflows/compose-check.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

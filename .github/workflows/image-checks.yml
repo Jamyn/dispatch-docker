@@ -11,20 +11,13 @@ name: Image checks
 # sources, since new CVEs are disclosed against already-built software
 # constantly.
 
+# No `paths:` filter -- required status check. See compose-check.yml. This one
+# builds the image, so it is the slowest of them; it runs on every PR anyway
+# because "main always builds" is the property this repository exists to hold.
 on:
   pull_request:
-    paths:
-      - "docker-compose.yml"
-      - "requirements.txt.example"
-      - ".env.example"
-      - ".github/workflows/image-checks.yml"
   push:
     branches: [main]
-    paths:
-      - "docker-compose.yml"
-      - "requirements.txt.example"
-      - ".env.example"
-      - ".github/workflows/image-checks.yml"
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:

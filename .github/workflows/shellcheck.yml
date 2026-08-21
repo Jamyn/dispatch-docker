@@ -1,15 +1,10 @@
 name: shellcheck
 
+# No `paths:` filter -- required status check. See compose-check.yml.
 on:
   pull_request:
-    paths:
-      - "install.sh"
-      - ".github/workflows/shellcheck.yml"
   push:
     branches: [main]
-    paths:
-      - "install.sh"
-      - ".github/workflows/shellcheck.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
