@@ -24,3 +24,6 @@
 
 # Claude Code local permission overrides; not shared.
 /.claude/settings.local.json
+
+# Backups install.sh writes next to .env; they hold the same secrets.
+.env.backup-*
