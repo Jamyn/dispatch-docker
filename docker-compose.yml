@@ -63,7 +63,7 @@ services:
       # image above is pinned by digest: a tag can be repointed under us. That
       # mattered less when this built from the archived Netflix repo, whose refs
       # nobody can move, and matters again now that it builds from a live
-      # repository. b70d85d6 is our fork's `main` (release v26.08.19.1), upstream's `main`
+      # repository. a1e4107e is our fork's `main` (release v26.08.21), upstream's `main`
       # (dd2837e8, its final state before archival, 457 commits past the old
       # `latest`-based pin) plus this fork's fixes for breakage that jump
       # introduced, and its dependency raises past known CVEs:
@@ -135,7 +135,7 @@ services:
       # tag is `latest`, which doesn't match versioningit's default `v*`
       # pattern -- upstream's own builds of `main` produce the same 0.1.0.
       # Not a regression introduced by this pin.
-      context: https://github.com/Jamyn/dispatch.git#b70d85d62b42f8d15c76210e2728ea698b957083
+      context: https://github.com/Jamyn/dispatch.git#a1e4107e6d6772c93ed048ed3ab9ab5e666ab8b2
     command: ["server", "start", "dispatch.main:app", "--host=0.0.0.0"]
     ports:
       - "8000:8000"
