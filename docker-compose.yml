@@ -7,7 +7,7 @@ services:
       - .env
     # Digest of the multi-arch manifest list for 18.4 (amd64 + arm64/v8 + arm),
     # so the tag cannot be repointed under us. Update tag and digest together.
-    image: postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+    image: postgres:18.6@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
     # No host port mapping: web, scheduler, and every install.sh database step
     # reach Postgres by service name over the compose network. Publishing 5432
     # exposed the database on all host interfaces with default credentials.
